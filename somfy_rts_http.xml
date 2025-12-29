@@ -6,14 +6,17 @@
            rpm_xml_version="$Revision: 1.0 $"
            minimum_component_engine_version="0.0">
     <notes>
-        Somfy RTS Controller profile for Savant.
-        Version 1.0: Initial version for basic shade control.
+        Somfy RTS Controller profile for Savant (HTTP Interface).
+        Version 1.0: Initial version for basic shade control using the HTTP API.
     </notes>
 
     <control_interfaces preferred="ip">
-        <ip port="23" response_time_length_ms="1000" name_on_component="Ethernet">
-            <send_postfix type="hex">0D0A</send_postfix>
-            <receive_end_condition test_condition="data" type="hex">0D0A</receive_end_condition>
+        <ip port="80" name_on_component="Ethernet">
+            <http_api>
+                <post path="/shadeCommand">
+                    <payload content_type="application/json"/>
+                </post>
+            </http_api>
         </ip>
     </control_interfaces>
 
@@ -21,7 +24,7 @@
         <data name_on_component="Ethernet">
             <combined_media>
                 <data_media type="ethernet"/>
-                <control port="23"/>
+                <control port="80"/>
             </combined_media>
         </data>
         <internal name_on_component="Shade Controller">
@@ -40,12 +43,13 @@
                 <action_argument name="Address1" note="SHADE_ID"/>
                 <command_interface interface="ip">
                     <command response_required="no">
-                        <parameter_list>
-                            <parameter parameter_data_type="character" action_argument="Address1"/>
-                            <parameter parameter_data_type="character" name="space"> </parameter>
-                            <parameter name="const" parameter_data_type="character">Up</parameter>
-                        </parameter_list>
-                        <delay ms_delay="100"/>
+                        <http_api_call>
+                            <post path="/shadeCommand">
+                                <payload>
+                                    {"shadeId":<action_argument name="Address1"/>,"command":"Up"}
+                                </payload>
+                            </post>
+                        </http_api_call>
                     </command>
                 </command_interface>
             </action>
@@ -54,12 +58,13 @@
                 <action_argument name="Address1" note="SHADE_ID"/>
                 <command_interface interface="ip">
                     <command response_required="no">
-                        <parameter_list>
-                            <parameter parameter_data_type="character" action_argument="Address1"/>
-                            <parameter parameter_data_type="character" name="space"> </parameter>
-                            <parameter name="const" parameter_data_type="character">Down</parameter>
-                        </parameter_list>
-                        <delay ms_delay="100"/>
+                        <http_api_call>
+                            <post path="/shadeCommand">
+                                <payload>
+                                    {"shadeId":<action_argument name="Address1"/>,"command":"Down"}
+                                </payload>
+                            </post>
+                        </http_api_call>
                     </command>
                 </command_interface>
             </action>
@@ -68,12 +73,13 @@
                 <action_argument name="Address1" note="SHADE_ID"/>
                 <command_interface interface="ip">
                     <command response_required="no">
-                        <parameter_list>
-                            <parameter parameter_data_type="character" action_argument="Address1"/>
-                            <parameter parameter_data_type="character" name="space"> </parameter>
-                            <parameter name="const" parameter_data_type="character">My</parameter>
-                        </parameter_list>
-                        <delay ms_delay="100"/>
+                        <http_api_call>
+                            <post path="/shadeCommand">
+                                <payload>
+                                    {"shadeId":<action_argument name="Address1"/>,"command":"My"}
+                                </payload>
+                            </post>
+                        </http_api_call>
                     </command>
                 </command_interface>
             </action>
@@ -83,13 +89,13 @@
                 <action_argument name="Address1" note="SHADE_ID"/>
                 <command_interface interface="ip">
                     <command response_required="no">
-                        <parameter_list>
-                            <parameter parameter_data_type="character" action_argument="Address1"/>
-                            <parameter parameter_data_type="character" name="space"> </parameter>
-                            <parameter name="const" parameter_data_type="character">move </parameter>
-                            <parameter parameter_data_type="character" action_argument="ShadeLevel"/>
-                        </parameter_list>
-                        <delay ms_delay="100"/>
+                        <http_api_call>
+                            <post path="/shadeCommand">
+                                <payload>
+                                    {"shadeId":<action_argument name="Address1"/>,"target":<action_argument name="ShadeLevel"/>}
+                                </payload>
+                            </post>
+                        </http_api_call>
                     </command>
                 </command_interface>
             </action>
