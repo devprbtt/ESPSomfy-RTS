@@ -9,6 +9,7 @@
 #include "Somfy.h"
 #include "MQTT.h"
 #include "GitOTA.h"
+#include "Telnet.h"
 
 ConfigSettings settings;
 Web webServer;
@@ -18,6 +19,7 @@ rebootDelay_t rebootDelay;
 SomfyShadeController somfy;
 MQTTClass mqtt;
 GitUpdater git;
+TelnetControl telnet;
 
 uint32_t oldheap = 0;
 void setup() {
@@ -34,8 +36,9 @@ void setup() {
   webServer.startup();
   webServer.begin();
   delay(1000);
-  net.setup();  
+  net.setup();
   somfy.begin();
+  telnet.begin();
   //git.checkForUpdate();
   esp_task_wdt_init(7, true); //enable panic so ESP32 restarts
   esp_task_wdt_add(NULL); //add current thread to WDT watch
@@ -77,6 +80,7 @@ void loop() {
     if(millis() - timing > 100) Serial.printf("Timing Socket: %ldms\n", millis() - timing);
     esp_task_wdt_reset();
     timing = millis();
+    telnet.loop();
   }
   if(rebootDelay.reboot && millis() > rebootDelay.rebootTime) {
     net.end();
