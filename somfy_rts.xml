@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="racepoint_component_profile.xsd"
+           manufacturer="Somfy"
+           model="RTS Controller"
+           device_class="Shade_controller"
+           rpm_xml_version="$Revision: 1.0 $"
+           minimum_component_engine_version="0.0">
+    <notes>
+        Somfy RTS Controller profile for Savant.
+        Version 1.0: Initial version for basic shade control.
+    </notes>
+
+    <control_interfaces preferred="ip">
+        <ip port="23" response_time_length_ms="1000" name_on_component="Ethernet">
+            <send_postfix type="hex">0D0A</send_postfix>
+            <receive_end_condition test_condition="data" type="hex">0D0A</receive_end_condition>
+        </ip>
+    </control_interfaces>
+
+    <media_interfaces>
+        <data name_on_component="Ethernet">
+            <combined_media>
+                <data_media type="ethernet"/>
+                <control port="23"/>
+            </combined_media>
+        </data>
+        <internal name_on_component="Shade Controller">
+            <environmental_media/>
+            <resource resource_type="ENV_SHADECONTROLLER_SOURCE"/>
+        </internal>
+    </media_interfaces>
+
+    <logical_component logical_component_name="Shade_controller">
+        <implementation>
+            <internal name_on_component="Shade Controller"/>
+        </implementation>
+
+        <resource_component_actions resource_type="ENV_SHADECONTROLLER_SOURCE">
+            <action name="ShadeUp">
+                <action_argument name="Address1" note="SHADE_ID"/>
+                <command_interface interface="ip">
+                    <command response_required="no">
+                        <parameter_list>
+                            <parameter parameter_data_type="character" action_argument="Address1"/>
+                            <parameter parameter_data_type="character" name="space"> </parameter>
+                            <parameter name="const" parameter_data_type="character">Up</parameter>
+                        </parameter_list>
+                        <delay ms_delay="100"/>
+                    </command>
+                </command_interface>
+            </action>
+
+            <action name="ShadeDown">
+                <action_argument name="Address1" note="SHADE_ID"/>
+                <command_interface interface="ip">
+                    <command response_required="no">
+                        <parameter_list>
+                            <parameter parameter_data_type="character" action_argument="Address1"/>
+                            <parameter parameter_data_type="character" name="space"> </parameter>
+                            <parameter name="const" parameter_data_type="character">Down</parameter>
+                        </parameter_list>
+                        <delay ms_delay="100"/>
+                    </command>
+                </command_interface>
+            </action>
+
+            <action name="ShadeStop">
+                <action_argument name="Address1" note="SHADE_ID"/>
+                <command_interface interface="ip">
+                    <command response_required="no">
+                        <parameter_list>
+                            <parameter parameter_data_type="character" action_argument="Address1"/>
+                            <parameter parameter_data_type="character" name="space"> </parameter>
+                            <parameter name="const" parameter_data_type="character">My</parameter>
+                        </parameter_list>
+                        <delay ms_delay="100"/>
+                    </command>
+                </command_interface>
+            </action>
+
+            <action name="ShadeSet">
+                <action_argument name="ShadeLevel" note="Percentage to not be shaded. 0 means all the way down, 100 means all the way up"/>
+                <action_argument name="Address1" note="SHADE_ID"/>
+                <command_interface interface="ip">
+                    <command response_required="no">
+                        <parameter_list>
+                            <parameter parameter_data_type="character" action_argument="Address1"/>
+                            <parameter parameter_data_type="character" name="space"> </parameter>
+                            <parameter name="const" parameter_data_type="character">move </parameter>
+                            <parameter parameter_data_type="character" action_argument="ShadeLevel"/>
+                        </parameter_list>
+                        <delay ms_delay="100"/>
+                    </command>
+                </command_interface>
+            </action>
+
+            <entity name="Shade" address_components="1">
+                <group_representation>
+                    <push_button_representation>
+                        <release_action name="ShadeUp"/>
+                        <osd_press_action name="ShadeUp"/>
+                    </push_button_representation>
+                    <push_button_representation>
+                        <release_action name="ShadeDown"/>
+                        <osd_press_action name="ShadeDown"/>
+                    </push_button_representation>
+                    <push_button_representation>
+                        <release_action name="ShadeStop"/>
+                        <osd_press_action name="ShadeStop"/>
+                    </push_button_representation>
+                </group_representation>
+            </entity>
+
+            <entity name="Shade Slider" address_components="1">
+                <slider_representation>
+                    <press_action name="ShadeSet"/>
+                    <valueSource name="ShadeLevel">
+                        <unique_identifier name="Address1" address_component="1" format="%d"/>
+                    </valueSource>
+                </slider_representation>
+            </entity>
+        </resource_component_actions>
+    </logical_component>
+</component>
