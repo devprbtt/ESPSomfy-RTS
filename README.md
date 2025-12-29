@@ -90,6 +90,17 @@ If you want to flash ESPSomfy RTS with [web.esphome.io](https://web.esphome.io/)
 
 The UI assets served from LittleFS live in the `data/` directory. If you have not changed them, you can keep using the existing `SomfyController.littlefs.bin` in the repository. When you do change those assets, rebuild and flash a new LittleFS image with your preferred ESP32 LittleFS tool before uploading the firmware binary.
 
+### Building from VS Code
+If you pull this repository into VS Code and prefer to build from there instead of a separate terminal, you can reuse the same Arduino CLI workflow:
+
+1. Install the **Arduino** extension in VS Code and make sure `arduino-cli` is on your `PATH` (or set `arduino.path` in your VS Code settings).
+2. Open the `SomfyController.ino` workspace folder in VS Code so the extension detects the sketch and the `data/` assets.
+3. In the command palette (`Ctrl+Shift+P` or `Cmd+Shift+P`), run **Arduino: Initialize** to let the extension discover cores and libraries.
+4. Still in the command palette, run **Arduino: Board Config** and choose your ESP32 board FQBN (for example `esp32:esp32:esp32` or `esp32:esp32:esp32s3`).
+5. Run **Arduino: Select Programmer** and pick **Default** (the bin build does not require a hardware programmer).
+6. Run **Arduino: Verify** to compile. The extension invokes `arduino-cli` under the hood, and the resulting `SomfyController.ino.<fqbn>.bin` appears in `.arduino/build/` inside the workspace. That `.bin` is the file you can upload with https://web.esphome.io/.
+7. If you edited files in `data/`, rebuild the LittleFS image with your preferred ESP32 LittleFS uploader before flashing, just like when building from the terminal.
+
 ## Sources for this Project
 I spent some time reading about a myriad of topics but in the end the primary source for this project comes from https://pushstack.wordpress.com/somfy-rts-protocol/.  The work done on pushstack regarding the protocol timing made this feasible without burning a bunch of time measuring pulses.
 
