@@ -68,10 +68,42 @@ Once you have your hardware built, the only thing left to do is connect the ESP3
 While the interface that comes with the ESPSomfy RTS is a huge improvement, the whole idea of this project is to make the shades controllable from everywhere that I want to control them.  So for that I created a couple of interfaces that you can use to bolt on your own automation.  These options are for those people that have a propeller on their hat.  They do things make red nodes (using Node-Red) or have their own web interface.
 
 You can find the documentation for the interfaces in the [Integrations](https://github.com/rstrouse/ESPSomfy-RTS/wiki/Integrations) wiki.  Plenty of stuff there for you folks that make red nodes and stuff.
-  
+
+## Building a flashable `.bin`
+If you want to flash ESPSomfy RTS with [web.esphome.io](https://web.esphome.io/), you only need a compiled firmware binary. The steps below use the Arduino CLI so you can build that binary locally.
+
+1. Install the [Arduino CLI](https://arduino.github.io/arduino-cli/installation/) and the ESP32 core.
+   ```bash
+   arduino-cli config init
+   arduino-cli core update-index
+   arduino-cli core install esp32:esp32
+   ```
+2. Install the required libraries (matching the includes in this project).
+   ```bash
+   arduino-cli lib install "ArduinoJson" "PubSubClient" "arduinoWebSockets" "SmartRC-CC1101-Driver-Lib"
+   ```
+3. Compile the firmware for your board. The example below targets a typical ESP32 DevKit; change the `--fqbn` to `esp32:esp32:esp32s3` or another matching board ID as needed.
+   ```bash
+   arduino-cli compile --fqbn esp32:esp32:esp32 --output-dir build SomfyController.ino
+   ```
+   The resulting `build/SomfyController.ino.esp32.bin` can be uploaded directly through https://web.esphome.io/.
+
+The UI assets served from LittleFS live in the `data/` directory. If you have not changed them, you can keep using the existing `SomfyController.littlefs.bin` in the repository. When you do change those assets, rebuild and flash a new LittleFS image with your preferred ESP32 LittleFS tool before uploading the firmware binary.
+
+### Building from VS Code
+If you pull this repository into VS Code and prefer to build from there instead of a separate terminal, you can reuse the same Arduino CLI workflow:
+
+1. Install the **Arduino** extension in VS Code and make sure `arduino-cli` is on your `PATH` (or set `arduino.path` in your VS Code settings).
+2. Open the `SomfyController.ino` workspace folder in VS Code so the extension detects the sketch and the `data/` assets.
+3. In the command palette (`Ctrl+Shift+P` or `Cmd+Shift+P`), run **Arduino: Initialize** to let the extension discover cores and libraries.
+4. Still in the command palette, run **Arduino: Board Config** and choose your ESP32 board FQBN (for example `esp32:esp32:esp32` or `esp32:esp32:esp32s3`).
+5. Run **Arduino: Select Programmer** and pick **Default** (the bin build does not require a hardware programmer).
+6. Run **Arduino: Verify** to compile. The extension invokes `arduino-cli` under the hood, and the resulting `SomfyController.ino.<fqbn>.bin` appears in `.arduino/build/` inside the workspace. That `.bin` is the file you can upload with https://web.esphome.io/.
+7. If you edited files in `data/`, rebuild the LittleFS image with your preferred ESP32 LittleFS uploader before flashing, just like when building from the terminal.
+
 ## Sources for this Project
-I spent some time reading about a myriad of topics but in the end the primary source for this project comes from https://pushstack.wordpress.com/somfy-rts-protocol/.  The work done on pushstack regarding the protocol timing made this feasible without burning a bunch of time measuring pulses.  
-  
+I spent some time reading about a myriad of topics but in the end the primary source for this project comes from https://pushstack.wordpress.com/somfy-rts-protocol/.  The work done on pushstack regarding the protocol timing made this feasible without burning a bunch of time measuring pulses.
+
 Configuration of the Transceiver is done with the ELECHOUSE_CC1101 library which you will need to include in your project should you want to compile the code.  The one used for compiling this module can be found here. https://github.com/LSatan/SmartRC-CC1101-Driver-Lib
 
   
