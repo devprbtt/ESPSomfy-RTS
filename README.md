@@ -33,6 +33,15 @@ After you get this up and running you will have the ability to interact with you
 * Set blind tilt by percentage
 * Control Awning Sun/Wind Sensors
 
+## Telnet Control
+The firmware exposes a simple telnet console on port 23 for quick shade control:
+
+- `list` — show all shades with id, position/target, direction, address, flags (and tilt if present)
+- `shade <id>` — show details for a specific shade
+- `target <id> <0-100>` — move shade to percentage target
+- `cmd <id> <command> [repeat] [stepSize]` — send a Somfy command (`up`, `down`, `my`, `stop`, `prog`, `favorite`, `stepup`, `stepdown`, `toggle`, etc.)
+- `help` — list commands
+- `exit` — close the session
 ## Moving a Shade
 You can move the shade to the full up position by clicking the up button.  To stop the shade during travel, press the my button and the shade will stop.  To move the shade to the full down position press the down button.  At any point during the movement you can press the my button to stop the shade.
 

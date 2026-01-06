@@ -9,6 +9,7 @@
 #include "Somfy.h"
 #include "MQTT.h"
 #include "GitOTA.h"
+#include "TelnetServer.h"
 
 ConfigSettings settings;
 Web webServer;
@@ -18,6 +19,7 @@ rebootDelay_t rebootDelay;
 SomfyShadeController somfy;
 MQTTClass mqtt;
 GitUpdater git;
+TelnetServer telnet;
 
 uint32_t oldheap = 0;
 void setup() {
@@ -25,8 +27,14 @@ void setup() {
   Serial.println();
   Serial.println("Startup/Boot....");
   Serial.println("Mounting File System...");
-  if(LittleFS.begin()) Serial.println("File system mounted successfully");
-  else Serial.println("Error mounting file system");
+  if(LittleFS.begin()) {
+    Serial.println("File system mounted successfully");
+  }
+  else {
+    Serial.println("Error mounting file system; formatting...");
+    if(LittleFS.format() && LittleFS.begin()) Serial.println("LittleFS formatted and mounted");
+    else Serial.println("LittleFS format/mount failed");
+  }
   settings.begin();
   if(WiFi.status() == WL_CONNECTED) WiFi.disconnect(true);
   delay(10);
@@ -36,6 +44,7 @@ void setup() {
   delay(1000);
   net.setup();  
   somfy.begin();
+  telnet.begin();
   //git.checkForUpdate();
   esp_task_wdt_init(7, true); //enable panic so ESP32 restarts
   esp_task_wdt_add(NULL); //add current thread to WDT watch
@@ -77,6 +86,8 @@ void loop() {
     if(millis() - timing > 100) Serial.printf("Timing Socket: %ldms\n", millis() - timing);
     esp_task_wdt_reset();
     timing = millis();
+    telnet.loop();
+    esp_task_wdt_reset();
   }
   if(rebootDelay.reboot && millis() > rebootDelay.rebootTime) {
     net.end();

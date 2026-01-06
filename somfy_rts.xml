@@ -8,6 +8,7 @@
     <notes>
         Somfy RTS Controller profile for Savant.
         Version 1.0: Initial version for basic shade control.
+        Version 1.1: Updated to use telnet console commands (`cmd`, `target`) and live UPDATE/REMOVED feedback.
     </notes>
 
     <control_interfaces preferred="ip">
@@ -41,9 +42,9 @@
                 <command_interface interface="ip">
                     <command response_required="no">
                         <parameter_list>
+                            <parameter name="const" parameter_data_type="character">cmd </parameter>
                             <parameter parameter_data_type="character" action_argument="Address1"/>
-                            <parameter parameter_data_type="character" name="space"> </parameter>
-                            <parameter name="const" parameter_data_type="character">Up</parameter>
+                            <parameter name="const2" parameter_data_type="character"> up</parameter>
                         </parameter_list>
                         <delay ms_delay="100"/>
                     </command>
@@ -55,9 +56,9 @@
                 <command_interface interface="ip">
                     <command response_required="no">
                         <parameter_list>
+                            <parameter name="const" parameter_data_type="character">cmd </parameter>
                             <parameter parameter_data_type="character" action_argument="Address1"/>
-                            <parameter parameter_data_type="character" name="space"> </parameter>
-                            <parameter name="const" parameter_data_type="character">Down</parameter>
+                            <parameter name="const2" parameter_data_type="character"> down</parameter>
                         </parameter_list>
                         <delay ms_delay="100"/>
                     </command>
@@ -69,9 +70,9 @@
                 <command_interface interface="ip">
                     <command response_required="no">
                         <parameter_list>
+                            <parameter name="const" parameter_data_type="character">cmd </parameter>
                             <parameter parameter_data_type="character" action_argument="Address1"/>
-                            <parameter parameter_data_type="character" name="space"> </parameter>
-                            <parameter name="const" parameter_data_type="character">My</parameter>
+                            <parameter name="const2" parameter_data_type="character"> stop</parameter>
                         </parameter_list>
                         <delay ms_delay="100"/>
                     </command>
@@ -84,9 +85,9 @@
                 <command_interface interface="ip">
                     <command response_required="no">
                         <parameter_list>
+                            <parameter name="const" parameter_data_type="character">target </parameter>
                             <parameter parameter_data_type="character" action_argument="Address1"/>
                             <parameter parameter_data_type="character" name="space"> </parameter>
-                            <parameter name="const" parameter_data_type="character">move </parameter>
                             <parameter parameter_data_type="character" action_argument="ShadeLevel"/>
                         </parameter_list>
                         <delay ms_delay="100"/>
@@ -119,6 +120,22 @@
                     </valueSource>
                 </slider_representation>
             </entity>
+
+            <status_messages>
+                <!-- Telnet live updates -->
+                <status_message name="ShadeUpdate">
+                    <constant type="character">UPDATE #</constant>
+                    <data type="integer" action_argument="Address1" terminator=" " terminator_type="character"/>
+                    <constant type="character">Shade </constant>
+                    <data type="integer" terminator=" " terminator_type="character"/>
+                    <constant type="character">pos:</constant>
+                    <data type="integer" state="ShadeLevel" terminator="%" terminator_type="character" state_update_action="replace"/>
+                </status_message>
+                <status_message name="ShadeRemoved">
+                    <constant type="character">REMOVED #</constant>
+                    <data type="integer" action_argument="Address1" terminator=" " terminator_type="character"/>
+                </status_message>
+            </status_messages>
         </resource_component_actions>
     </logical_component>
 </component>
