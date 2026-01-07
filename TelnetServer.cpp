@@ -28,10 +28,14 @@ bool TelnetServer::parseId(const char *token, uint8_t *outId) {
   return true;
 }
 void TelnetServer::printShadeState(SomfyShade *shade) {
+  this->printShadeJson(shade, "state");
+}
+void TelnetServer::printShadeJson(SomfyShade *shade, const char *evt) {
   if(!this->client || !this->client.connected() || !shade) return;
   const int8_t pos = shade->transformPosition(shade->currentPos);
   const int8_t target = shade->transformPosition(shade->target);
-  this->client.printf("#%u %-20s pos:%3d%% tgt:%3d%% dir:%2d addr:%lu flags:0x%02X\r\n",
+  this->client.printf("{\"event\":\"%s\",\"id\":%u,\"name\":\"%s\",\"pos\":%d,\"target\":%d,\"dir\":%d,\"addr\":%lu,\"flags\":%u",
+    evt,
     shade->getShadeId(),
     shade->name,
     pos,
@@ -42,8 +46,9 @@ void TelnetServer::printShadeState(SomfyShade *shade) {
   if(shade->tiltType != tilt_types::none) {
     const int8_t tiltPos = shade->transformPosition(shade->currentTiltPos);
     const int8_t tiltTarget = shade->transformPosition(shade->tiltTarget);
-    this->client.printf("    tilt pos:%3d%% tgt:%3d%% dir:%2d\r\n", tiltPos, tiltTarget, shade->tiltDirection);
+    this->client.printf(",\"tiltPos\":%d,\"tiltTarget\":%d,\"tiltDir\":%d", tiltPos, tiltTarget, shade->tiltDirection);
   }
+  this->client.print("}\r\n");
 }
 void TelnetServer::printAllShades() {
   if(!this->client || !this->client.connected()) return;
@@ -51,7 +56,7 @@ void TelnetServer::printAllShades() {
   for(uint8_t i = 0; i < SOMFY_MAX_SHADES; i++) {
     SomfyShade *shade = &somfy.shades[i];
     if(shade && shade->getShadeId() != 255) {
-      this->printShadeState(shade);
+      this->printShadeJson(shade);
       count++;
     }
   }
@@ -93,7 +98,7 @@ void TelnetServer::handleLine(char *line) {
       this->client.println("Shade not found.");
       return;
     }
-    this->printShadeState(shade);
+    this->printShadeJson(shade);
     return;
   }
   else if(strcmp(cmd, "target") == 0 || strcmp(cmd, "set") == 0 || strcmp(cmd, "goto") == 0) {
@@ -112,8 +117,8 @@ void TelnetServer::handleLine(char *line) {
       return;
     }
     shade->moveToTarget(shade->transformPosition(target));
-    this->client.printf("Shade %u moving to %d%%\r\n", shadeId, target);
-    this->printShadeState(shade);
+    this->client.printf("{\"event\":\"command\",\"id\":%u,\"target\":%d}\r\n", shadeId, target);
+    this->printShadeJson(shade, "update");
     return;
   }
   else if(strcmp(cmd, "cmd") == 0 || strcmp(cmd, "send") == 0 || strcmp(cmd, "control") == 0) {
@@ -135,10 +140,9 @@ void TelnetServer::handleLine(char *line) {
     uint8_t repeat = repeatTok ? static_cast<uint8_t>(atoi(repeatTok)) : shade->repeats;
     uint8_t stepSize = stepTok ? static_cast<uint8_t>(atoi(stepTok)) : 0;
     shade->sendCommand(cmdVal, repeat > 0 ? repeat : shade->repeats, stepSize);
-    this->client.printf("Sent %s to shade %u (repeat %u", commandTok, shadeId, repeat > 0 ? repeat : shade->repeats);
-    if(stepSize > 0) this->client.printf(", step %u", stepSize);
-    this->client.println(")");
-    this->printShadeState(shade);
+    this->client.printf("{\"event\":\"command\",\"id\":%u,\"cmd\":\"%s\",\"repeat\":%u,\"step\":%u}\r\n",
+      shadeId, commandTok, repeat > 0 ? repeat : shade->repeats, stepSize);
+    this->printShadeJson(shade, "update");
     return;
   }
   else if(strcmp(cmd, "exit") == 0 || strcmp(cmd, "quit") == 0 || strcmp(cmd, "bye") == 0) {
@@ -252,8 +256,7 @@ void TelnetServer::emitLiveUpdates() {
     seen[sid] = true;
     ShadeSnapshot &snap = this->snapshots[sid];
     if(this->hasShadeChanged(snap, shade)) {
-      this->client.print("UPDATE ");
-      this->printShadeState(shade);
+      this->printShadeJson(shade, "update");
       this->snapshotShade(snap, shade);
     }
   }
@@ -261,7 +264,7 @@ void TelnetServer::emitLiveUpdates() {
   for(uint8_t id = 0; id < SOMFY_MAX_SHADES; id++) {
     ShadeSnapshot &snap = this->snapshots[id];
     if(snap.present && !seen[id]) {
-      this->client.printf("REMOVED #%u %s\r\n", snap.shadeId, snap.name);
+      this->client.printf("{\"event\":\"removed\",\"id\":%u,\"name\":\"%s\"}\r\n", snap.shadeId, snap.name);
       snap.present = false;
     }
   }

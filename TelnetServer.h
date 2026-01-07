@@ -35,6 +35,7 @@ class TelnetServer {
     void printHelp();
     void printAllShades();
     void printShadeState(SomfyShade *shade);
+    void printShadeJson(SomfyShade *shade, const char *evt = "state");
     bool parseId(const char *token, uint8_t *outId);
     void emitLiveUpdates();
     void snapshotShade(ShadeSnapshot &snap, SomfyShade *shade);
