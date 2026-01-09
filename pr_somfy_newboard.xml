@@ -1,0 +1,260 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component manufacturer="PR" model="Somfy_NewBoard" rpm_xml_version="1.0" minimum_component_engine_version="8.10"
+          xsi:noNamespaceSchemaLocation="racepoint_component_profile.xsd"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          alias="Controladora Persiana Somfy New Board"
+          device_class="Shade_controller">
+
+    <notes></notes>
+
+    <control_interfaces preferred="ip">
+      <ip port="23" protocol="tcp" response_time_length_ms="300" name_on_component="Ethernet">
+        <!-- Required so commands execute -->
+        <send_postfix type="hex">0D0A</send_postfix>
+
+        <!-- IMPORTANT: do NOT set receive_end_condition here -->
+      </ip>
+    </control_interfaces>
+
+
+    <media_interfaces>
+        <data name_on_component="Ethernet">
+            <combined_media>
+                <data_media type="ethernet"/>
+                <control port="23"/>
+            </combined_media>
+        </data>
+
+        <internal name_on_component="SHADE CONTROLLER">
+            <environmental_media/>
+            <resource resource_type="ENV_SHADECONTROLLER_SOURCE"/>
+        </internal>
+    </media_interfaces>
+
+    <state_variable_list>
+        <state_variable name="ShadeSetVariable" owning_logical_component="Shade_controller" state_center_type="integer">0</state_variable>
+        <state_variable name="OutgoingAddress1" owning_logical_component="Shade_controller" state_center_type="string"></state_variable>
+
+        <!-- FIX: this state is used by the status_message + unique_identifier, but wasn’t declared -->
+        <state_variable name="CurrentMotorAddress" owning_logical_component="Shade_controller" state_center_type="string"></state_variable>
+
+        <dynamic_state_variable name="CurrentShadePosition" state_center_binding="CurrentShadePosition"
+                               owning_logical_component="Shade_controller" state_center_type="integer"
+                               max_value="100" min_value="0"></dynamic_state_variable>
+
+        <dynamic_state_variable name="GroupShadePosition" state_center_binding="GroupShadePosition"
+                               owning_logical_component="Shade_controller" state_center_type="integer"
+                               min_value="0" max_value="100"></dynamic_state_variable>
+
+        <state_variable name="CurrentMotorName" owning_logical_component="Shade_controller" state_center_type="string"></state_variable>
+        <state_variable name="CurrentMotorDirection" owning_logical_component="Shade_controller" state_center_type="integer"></state_variable>
+    </state_variable_list>
+
+    <logical_component logical_component_name="Shade_controller">
+        <implementation>
+            <internal name_on_component="SHADE CONTROLLER"/>
+        </implementation>
+
+        <status_messages>
+            <status_message name="ShadeStateUpdate">
+                <constant type="character">{&quot;event&quot;:&quot;update&quot;,&quot;id&quot;:</constant>
+                <data type="character" terminator="," terminator_type="character">
+                    <update state="CurrentMotorAddress" type="string"></update>
+                </data>
+
+                <constant type="character">&quot;name&quot;:&quot;</constant>
+                <data type="character" terminator="&quot;,&quot;pos&quot;" terminator_type="character">
+                    <update state="CurrentMotorName" type="string"></update>
+                </data>
+
+                <constant type="character">:</constant>
+                <data type="character" terminator=",&quot;target&quot;" terminator_type="character">
+                    <update state="CurrentShadePosition" type="integer"></update>
+                </data>
+
+                <constant type="character">:</constant>
+                <data type="character" terminator=",&quot;dir&quot;" terminator_type="character">
+                    <update state="trash" type="string"></update>
+                </data>
+
+                <constant type="character">:</constant>
+                <data type="character" terminator="," terminator_type="character">
+                    <update state="CurrentMotorDirection" type="integer"></update>
+                </data>
+
+                <append_data_to_state_names state="CurrentMotorAddress"/>
+            </status_message>
+
+            <status_message name="ShadeStateList">
+                <constant type="character">{&quot;event&quot;:&quot;state&quot;,&quot;id&quot;:</constant>
+                <data type="character" terminator="," terminator_type="character">
+                    <update state="CurrentMotorAddress" type="string"></update>
+                </data>
+
+                <constant type="character">&quot;name&quot;:&quot;</constant>
+                <data type="character" terminator="&quot;,&quot;pos&quot;" terminator_type="character">
+                    <update state="CurrentMotorName" type="string"></update>
+                </data>
+
+                <constant type="character">:</constant>
+                <data type="character" terminator=",&quot;target&quot;" terminator_type="character">
+                    <update state="CurrentShadePosition" type="integer"></update>
+                </data>
+
+                <append_data_to_state_names state="CurrentMotorAddress"/>
+            </status_message>
+        </status_messages>
+
+        <resource_component_actions resource_type="ENV_SHADECONTROLLER_SOURCE">
+            <action name="ShadeUp">
+                <action_argument name="Address1" note="Shade ID (1, 2, 3, etc)"/>
+                <command_interface interface="ip">
+                    <command response_required="no">
+                        <command_string type="character">cmd </command_string>
+                        <parameter_list>
+                            <parameter parameter_data_type="character" action_argument="Address1"></parameter>
+                            <parameter parameter_data_type="character"> up</parameter>
+                        </parameter_list>
+                        <delay ms_delay="100"/>
+                    </command>
+                </command_interface>
+            </action>
+
+            <action name="ShadeDown">
+                <action_argument name="Address1" note="Shade ID (1, 2, 3, etc)"/>
+                <command_interface interface="ip">
+                    <command response_required="no">
+                        <command_string type="character">cmd </command_string>
+                        <parameter_list>
+                            <parameter parameter_data_type="character" action_argument="Address1"></parameter>
+                            <parameter parameter_data_type="character"> down</parameter>
+                        </parameter_list>
+                        <delay ms_delay="100"/>
+                    </command>
+                </command_interface>
+            </action>
+
+            <action name="ShadeStop">
+                <action_argument name="Address1" note="Shade ID (1, 2, 3, etc)"/>
+                <command_interface interface="ip">
+                    <command response_required="no">
+                        <command_string type="character">cmd </command_string>
+                        <parameter_list>
+                            <parameter parameter_data_type="character" action_argument="Address1"></parameter>
+                            <parameter parameter_data_type="character"> stop</parameter>
+                        </parameter_list>
+                        <delay ms_delay="100"/>
+                    </command>
+                </command_interface>
+            </action>
+
+            <action name="ShadeSet">
+                <action_argument name="ShadeLevel" note="Percentage to not be shaded. 0 means all the way down, 100 means all the way up"/>
+                <action_argument name="Address1" note="Shade ID (1, 2, 3, etc)"/>
+                <action_argument name="FadeTime"/>
+                <action_argument name="DelayTime"/>
+
+                <update_state_variable name="ShadeSetVariable" update_type="set" update_source="constant">155</update_state_variable>
+                <update_state_variable name="ShadeSetVariable" update_type="increment" update_source="action_argument">ShadeLevel</update_state_variable>
+
+                <command_interface interface="ip">
+                    <command response_required="no">
+                        <command_string type="character">target </command_string>
+                        <parameter_list>
+                            <parameter parameter_data_type="character" action_argument="Address1"></parameter>
+                            <parameter parameter_data_type="character"> </parameter>
+                            <parameter parameter_data_type="character" action_argument="ShadeLevel"></parameter>
+                        </parameter_list>
+                        <delay ms_delay="100"/>
+                    </command>
+                </command_interface>
+            </action>
+
+            <action name="RefreshShadeList">
+                <command_interface interface="ip">
+                    <command response_required="yes">
+                        <command_string type="character">list</command_string>
+                    </command>
+                </command_interface>
+            </action>
+
+            <entity name="Single Motor Variable Shade" address_components="1">
+                <slider_representation>
+                    <release_action name="ShadeSet"/>
+                    <valueSource name="CurrentShadePosition">
+                        <unique_identifier name="CurrentMotorAddress" address_component="1" format="%@"/>
+                    </valueSource>
+                </slider_representation>
+
+                <group_representation>
+                    <push_button_representation>
+                        <release_action name="ShadeSet"><argument name="ShadeLevel" value="0"/></release_action>
+                        <osd_press_action name="ShadeSet"><argument name="ShadeLevel" value="0"/></osd_press_action>
+                    </push_button_representation>
+
+                    <push_button_representation>
+                        <release_action name="ShadeSet"><argument name="ShadeLevel" value="20"/></release_action>
+                        <osd_press_action name="ShadeSet"><argument name="ShadeLevel" value="20"/></osd_press_action>
+                    </push_button_representation>
+
+                    <push_button_representation>
+                        <release_action name="ShadeSet"><argument name="ShadeLevel" value="40"/></release_action>
+                        <osd_press_action name="ShadeSet"><argument name="ShadeLevel" value="40"/></osd_press_action>
+                    </push_button_representation>
+
+                    <push_button_representation>
+                        <release_action name="ShadeSet"><argument name="ShadeLevel" value="60"/></release_action>
+                        <osd_press_action name="ShadeSet"><argument name="ShadeLevel" value="60"/></osd_press_action>
+                    </push_button_representation>
+
+                    <push_button_representation>
+                        <release_action name="ShadeSet"><argument name="ShadeLevel" value="80"/></release_action>
+                        <osd_press_action name="ShadeSet"><argument name="ShadeLevel" value="80"/></osd_press_action>
+                    </push_button_representation>
+
+                    <push_button_representation>
+                        <release_action name="ShadeSet"><argument name="ShadeLevel" value="100"/></release_action>
+                        <osd_press_action name="ShadeSet"><argument name="ShadeLevel" value="100"/></osd_press_action>
+                    </push_button_representation>
+                </group_representation>
+
+                <toggle_button_representation>
+                    <press_action name="ShadeSet"><argument name="ShadeLevel" value="100"/></press_action>
+                    <toggle_action name="ShadeSet"><argument name="ShadeLevel" value="0"/></toggle_action>
+                    <osd_press_action name="ShadeSet"><argument name="ShadeLevel" value="100"/></osd_press_action>
+                    <osd_hold_action name="ShadeSet"><argument name="ShadeLevel" value="0"/></osd_hold_action>
+
+                    <toggleOnUsingState name="CurrentShadePosition">
+                        <unique_identifier name="CurrentMotorAddress" address_component="1" format="%@"/>
+                    </toggleOnUsingState>
+                </toggle_button_representation>
+            </entity>
+
+            <entity name="Shade" address_components="1">
+                <group_representation>
+                    <push_button_representation>
+                        <release_action name="ShadeUp"/>
+                        <osd_press_action name="ShadeUp"/>
+                    </push_button_representation>
+
+                    <push_button_representation>
+                        <release_action name="ShadeDown"/>
+                        <osd_press_action name="ShadeDown"/>
+                    </push_button_representation>
+
+                    <push_button_representation>
+                        <release_action name="ShadeStop"/>
+                        <osd_press_action name="ShadeStop"/>
+                    </push_button_representation>
+                </group_representation>
+            </entity>
+
+            <entity name="System" address_components="0">
+                <push_button_representation>
+                    <release_action name="RefreshShadeList"/>
+                    <osd_press_action name="RefreshShadeList"/>
+                </push_button_representation>
+            </entity>
+        </resource_component_actions>
+    </logical_component>
+</component>
