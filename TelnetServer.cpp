@@ -6,19 +6,16 @@
 extern SomfyShadeController somfy;
 
 TelnetServer::TelnetServer() : server(23) {
-  this->resetInput();
+  for(auto &c : this->clients) this->resetInput(c);
 }
 void TelnetServer::begin() {
   this->server.begin();
   this->server.setNoDelay(true);
   Serial.println("Telnet server listening on port 23...");
 }
-void TelnetServer::resetInput() {
-  memset(this->inputBuffer, 0x00, sizeof(this->inputBuffer));
-  this->inputLength = 0;
-}
-void TelnetServer::sendPrompt() {
-  if(this->client && this->client.connected()) this->client.print("> ");
+void TelnetServer::resetInput(TelnetClient &c) {
+  memset(c.inputBuffer, 0x00, sizeof(c.inputBuffer));
+  c.inputLength = 0;
 }
 bool TelnetServer::parseId(const char *token, uint8_t *outId) {
   if(!token || !outId) return false;
@@ -27,14 +24,11 @@ bool TelnetServer::parseId(const char *token, uint8_t *outId) {
   *outId = static_cast<uint8_t>(val);
   return true;
 }
-void TelnetServer::printShadeState(SomfyShade *shade) {
-  this->printShadeJson(shade, "state");
-}
-void TelnetServer::printShadeJson(SomfyShade *shade, const char *evt) {
-  if(!this->client || !this->client.connected() || !shade) return;
+void TelnetServer::printShadeJson(TelnetClient &c, SomfyShade *shade, const char *evt) {
+  if(!c.client || !c.client.connected() || !shade) return;
   const int8_t pos = shade->transformPosition(shade->currentPos);
   const int8_t target = shade->transformPosition(shade->target);
-  this->client.printf("{\"event\":\"%s\",\"id\":%u,\"name\":\"%s\",\"pos\":%d,\"target\":%d,\"dir\":%d,\"addr\":%lu,\"flags\":%u",
+  c.client.printf("{\"event\":\"%s\",\"id\":%u,\"name\":\"%s\",\"pos\":%d,\"target\":%d,\"dir\":%d,\"addr\":%lu,\"flags\":%u",
     evt,
     shade->getShadeId(),
     shade->name,
@@ -46,59 +40,54 @@ void TelnetServer::printShadeJson(SomfyShade *shade, const char *evt) {
   if(shade->tiltType != tilt_types::none) {
     const int8_t tiltPos = shade->transformPosition(shade->currentTiltPos);
     const int8_t tiltTarget = shade->transformPosition(shade->tiltTarget);
-    this->client.printf(",\"tiltPos\":%d,\"tiltTarget\":%d,\"tiltDir\":%d", tiltPos, tiltTarget, shade->tiltDirection);
+    c.client.printf(",\"tiltPos\":%d,\"tiltTarget\":%d,\"tiltDir\":%d", tiltPos, tiltTarget, shade->tiltDirection);
   }
-  this->client.print("}\r\n");
+  c.client.print("}\r\n");
 }
-void TelnetServer::printAllShades() {
-  if(!this->client || !this->client.connected()) return;
+void TelnetServer::printAllShades(TelnetClient &c) {
+  if(!c.client || !c.client.connected()) return;
   uint8_t count = 0;
   for(uint8_t i = 0; i < SOMFY_MAX_SHADES; i++) {
     SomfyShade *shade = &somfy.shades[i];
     if(shade && shade->getShadeId() != 255) {
-      this->printShadeJson(shade);
+      this->printShadeJson(c, shade);
       count++;
     }
   }
-  if(count == 0) this->client.println("No shades configured.");
+  if(count == 0) c.client.println("{\"event\":\"info\",\"msg\":\"No shades configured\"}");
 }
-void TelnetServer::printHelp() {
-  if(!this->client || !this->client.connected()) return;
-  this->client.println("Available commands:");
-  this->client.println("  list                         - show all shades and their state");
-  this->client.println("  shade <id>                   - show details for a shade");
-  this->client.println("  target <id> <0-100>          - move shade to percentage target");
-  this->client.println("  cmd <id> <cmd> [repeat] [step]- send Somfy command (up/down/my/stop/prog/favorite/stepup/stepdown/toggle)");
-  this->client.println("  exit                         - close the telnet session");
+void TelnetServer::printHelp(TelnetClient &c) {
+  if(!c.client || !c.client.connected()) return;
+  c.client.println("{\"event\":\"help\",\"commands\":[\"list\",\"shade <id>\",\"target <id> <0-100>\",\"cmd <id> <cmd> [repeat] [step]\",\"exit\"]}");
 }
-void TelnetServer::handleLine(char *line) {
-  if(!line || !this->client || !this->client.connected()) return;
+void TelnetServer::handleLine(TelnetClient &tc, char *line) {
+  if(!line || !tc.client || !tc.client.connected()) return;
   while(*line && isspace(static_cast<unsigned char>(*line))) line++;
   if(*line == '\0') return;
   char *cmd = strtok(line, " ");
   if(!cmd) return;
   for(char *p = cmd; *p; ++p) *p = tolower(*p);
   if(strcmp(cmd, "help") == 0 || strcmp(cmd, "?") == 0) {
-    this->printHelp();
+    this->printHelp(tc);
     return;
   }
   else if(strcmp(cmd, "list") == 0 || strcmp(cmd, "status") == 0) {
-    this->printAllShades();
+    this->printAllShades(tc);
     return;
   }
   else if(strcmp(cmd, "shade") == 0 || strcmp(cmd, "get") == 0 || strcmp(cmd, "show") == 0) {
     char *idTok = strtok(nullptr, " ");
     uint8_t shadeId = 255;
     if(!idTok || !this->parseId(idTok, &shadeId)) {
-      this->client.println("Usage: shade <shadeId>");
+      tc.client.println("{\"event\":\"error\",\"msg\":\"Usage: shade <shadeId>\"}");
       return;
     }
     SomfyShade *shade = somfy.getShadeById(shadeId);
     if(!shade) {
-      this->client.println("Shade not found.");
+      tc.client.println("{\"event\":\"error\",\"msg\":\"Shade not found\"}");
       return;
     }
-    this->printShadeJson(shade);
+    this->printShadeJson(tc, shade);
     return;
   }
   else if(strcmp(cmd, "target") == 0 || strcmp(cmd, "set") == 0 || strcmp(cmd, "goto") == 0) {
@@ -106,19 +95,19 @@ void TelnetServer::handleLine(char *line) {
     char *targetTok = strtok(nullptr, " ");
     uint8_t shadeId = 255;
     if(!idTok || !targetTok || !this->parseId(idTok, &shadeId)) {
-      this->client.println("Usage: target <shadeId> <0-100>");
+      tc.client.println("{\"event\":\"error\",\"msg\":\"Usage: target <shadeId> <0-100>\"}");
       return;
     }
     int target = atoi(targetTok);
     target = constrain(target, 0, 100);
     SomfyShade *shade = somfy.getShadeById(shadeId);
     if(!shade) {
-      this->client.println("Shade not found.");
+      tc.client.println("{\"event\":\"error\",\"msg\":\"Shade not found\"}");
       return;
     }
     shade->moveToTarget(shade->transformPosition(target));
-    this->client.printf("{\"event\":\"command\",\"id\":%u,\"target\":%d}\r\n", shadeId, target);
-    this->printShadeJson(shade, "update");
+    tc.client.printf("{\"event\":\"command\",\"id\":%u,\"target\":%d}\r\n", shadeId, target);
+    this->printShadeJson(tc, shade, "update");
     return;
   }
   else if(strcmp(cmd, "cmd") == 0 || strcmp(cmd, "send") == 0 || strcmp(cmd, "control") == 0) {
@@ -128,72 +117,73 @@ void TelnetServer::handleLine(char *line) {
     char *stepTok = strtok(nullptr, " ");
     uint8_t shadeId = 255;
     if(!idTok || !commandTok || !this->parseId(idTok, &shadeId)) {
-      this->client.println("Usage: cmd <shadeId> <command> [repeat] [stepSize]");
+      tc.client.println("{\"event\":\"error\",\"msg\":\"Usage: cmd <shadeId> <command> [repeat] [stepSize]\"}");
       return;
     }
     SomfyShade *shade = somfy.getShadeById(shadeId);
     if(!shade) {
-      this->client.println("Shade not found.");
+      tc.client.println("{\"event\":\"error\",\"msg\":\"Shade not found\"}");
       return;
     }
     somfy_commands cmdVal = translateSomfyCommand(String(commandTok));
     uint8_t repeat = repeatTok ? static_cast<uint8_t>(atoi(repeatTok)) : shade->repeats;
     uint8_t stepSize = stepTok ? static_cast<uint8_t>(atoi(stepTok)) : 0;
     shade->sendCommand(cmdVal, repeat > 0 ? repeat : shade->repeats, stepSize);
-    this->client.printf("{\"event\":\"command\",\"id\":%u,\"cmd\":\"%s\",\"repeat\":%u,\"step\":%u}\r\n",
+    tc.client.printf("{\"event\":\"command\",\"id\":%u,\"cmd\":\"%s\",\"repeat\":%u,\"step\":%u}\r\n",
       shadeId, commandTok, repeat > 0 ? repeat : shade->repeats, stepSize);
-    this->printShadeJson(shade, "update");
+    this->printShadeJson(tc, shade, "update");
     return;
   }
   else if(strcmp(cmd, "exit") == 0 || strcmp(cmd, "quit") == 0 || strcmp(cmd, "bye") == 0) {
-    this->client.println("Closing session.");
-    this->client.stop();
-    this->resetInput();
+    tc.client.println("{\"event\":\"bye\"}");
+    tc.client.stop();
+    this->resetInput(tc);
     return;
   }
-  this->client.println("Unknown command. Type 'help' for options.");
+  tc.client.println("{\"event\":\"error\",\"msg\":\"Unknown command\"}");
 }
 void TelnetServer::loop() {
   esp_task_wdt_reset();
-  if(!this->client || !this->client.connected()) {
-    if(this->client) this->client.stop();
-    WiFiClient newClient = this->server.available();
-    if(newClient) {
-      this->client = newClient;
-      this->resetInput();
-      this->lastActivity = millis();
-      this->client.println();
-      this->client.println("Welcome to the ESPSomfy RTS telnet console.");
-      this->client.println("Type 'help' to list commands.");
-      this->printAllShades();
-      this->sendPrompt();
+  // Accept new connections
+  WiFiClient incoming = this->server.available();
+  if(incoming) {
+    for(auto &c : this->clients) {
+      if(!c.client || !c.client.connected()) {
+        c.client = incoming;
+        this->resetInput(c);
+        c.lastActivity = millis();
+        c.client.println("{\"event\":\"welcome\",\"msg\":\"ESPSomfy RTS telnet\"}");
+        this->printAllShades(c);
+        break;
+      }
     }
-    return;
   }
-  while(this->client.connected() && this->client.available()) {
-    char c = this->client.read();
-    if(c == '\r') continue;
-    if(c == '\n') {
-      this->inputBuffer[this->inputLength] = '\0';
-      this->handleLine(this->inputBuffer);
-      this->resetInput();
-      if(this->client && this->client.connected()) this->sendPrompt();
+  // Handle input and timeouts
+  for(auto &c : this->clients) {
+    if(!c.client || !c.client.connected()) continue;
+    while(c.client.connected() && c.client.available()) {
+      char ch = c.client.read();
+      if(ch == '\r') continue;
+      if(ch == '\n') {
+        c.inputBuffer[c.inputLength] = '\0';
+        this->handleLine(c, c.inputBuffer);
+        this->resetInput(c);
+      }
+      else if(ch == 0x08 || ch == 0x7F) {
+        if(c.inputLength > 0) c.inputLength--;
+      }
+      else if(c.inputLength < sizeof(c.inputBuffer) - 1 && isprint(static_cast<unsigned char>(ch))) {
+        c.inputBuffer[c.inputLength++] = ch;
+      }
+      c.lastActivity = millis();
     }
-    else if(c == 0x08 || c == 0x7F) {
-      if(this->inputLength > 0) this->inputLength--;
+    if(c.client.connected() && millis() - c.lastActivity > 600000UL) {
+      c.client.println("{\"event\":\"bye\",\"reason\":\"timeout\"}");
+      c.client.stop();
+      this->resetInput(c);
     }
-    else if(this->inputLength < sizeof(this->inputBuffer) - 1 && isprint(static_cast<unsigned char>(c))) {
-      this->inputBuffer[this->inputLength++] = c;
-    }
-    this->lastActivity = millis();
   }
-  // Push live updates while connected.
-  if(this->client.connected()) this->emitLiveUpdates();
-  if(this->client.connected() && millis() - this->lastActivity > 600000UL) {
-    this->client.println("Closing inactive session.");
-    this->client.stop();
-    this->resetInput();
-  }
+  this->emitLiveUpdates();
 }
 
 void TelnetServer::snapshotShade(ShadeSnapshot &snap, SomfyShade *shade) {
@@ -241,11 +231,12 @@ bool TelnetServer::hasShadeChanged(ShadeSnapshot &snap, SomfyShade *shade) {
   return false;
 }
 void TelnetServer::emitLiveUpdates() {
-  if(!this->client || !this->client.connected()) return;
-  static uint32_t lastEmit = 0;
+  bool anyClient = false;
+  for(auto &c : this->clients) if(c.client && c.client.connected()) { anyClient = true; break; }
+  if(!anyClient) return;
   // Throttle to ~10 updates/sec to avoid flooding idle loops.
-  if(millis() - lastEmit < 100) return;
-  lastEmit = millis();
+  if(millis() - this->lastEmit < 100) return;
+  this->lastEmit = millis();
   bool seen[SOMFY_MAX_SHADES] = {false};
   // Check for additions/changes
   for(uint8_t i = 0; i < SOMFY_MAX_SHADES; i++) {
@@ -256,7 +247,7 @@ void TelnetServer::emitLiveUpdates() {
     seen[sid] = true;
     ShadeSnapshot &snap = this->snapshots[sid];
     if(this->hasShadeChanged(snap, shade)) {
-      this->printShadeJson(shade, "update");
+      for(auto &c : this->clients) if(c.client && c.client.connected()) this->printShadeJson(c, shade, "update");
       this->snapshotShade(snap, shade);
     }
   }
@@ -264,7 +255,8 @@ void TelnetServer::emitLiveUpdates() {
   for(uint8_t id = 0; id < SOMFY_MAX_SHADES; id++) {
     ShadeSnapshot &snap = this->snapshots[id];
     if(snap.present && !seen[id]) {
-      this->client.printf("{\"event\":\"removed\",\"id\":%u,\"name\":\"%s\"}\r\n", snap.shadeId, snap.name);
+      for(auto &c : this->clients) if(c.client && c.client.connected())
+        c.client.printf("{\"event\":\"removed\",\"id\":%u,\"name\":\"%s\"}\r\n", snap.shadeId, snap.name);
       snap.present = false;
     }
   }
