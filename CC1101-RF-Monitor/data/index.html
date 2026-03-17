@@ -1,0 +1,504 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>CC1101 RF Monitor</title>
+  <style>
+    :root {
+      --bg: #f4efe6;
+      --panel: rgba(255,255,255,.78);
+      --line: rgba(59,43,24,.12);
+      --text: #24180b;
+      --muted: #6d5844;
+      --accent: #b74f2f;
+      --accent-2: #1b7f7a;
+      --warn: #8f1f1f;
+      --shadow: 0 24px 60px rgba(58,33,9,.12);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font: 15px/1.45 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(183,79,47,.18), transparent 28%),
+        radial-gradient(circle at top right, rgba(27,127,122,.18), transparent 26%),
+        linear-gradient(180deg, #f9f3ea, #efe4d5 70%, #e8dac6);
+      min-height: 100vh;
+    }
+    .shell {
+      max-width: 1320px;
+      margin: 0 auto;
+      padding: 20px;
+      display: grid;
+      gap: 16px;
+    }
+    .hero, .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(14px);
+    }
+    .hero {
+      padding: 22px;
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: flex-start;
+      flex-wrap: wrap;
+    }
+    .hero h1 {
+      margin: 0;
+      font-size: clamp(28px, 4vw, 46px);
+      letter-spacing: -.03em;
+    }
+    .hero p { margin: 8px 0 0; color: var(--muted); max-width: 720px; }
+    .badgebar {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+    .badge {
+      padding: 7px 11px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,.7);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: 1.2fr .8fr;
+      gap: 16px;
+    }
+    .stack { display: grid; gap: 16px; }
+    .panel { padding: 18px; }
+    .panel h2 {
+      margin: 0 0 12px;
+      font-size: 18px;
+    }
+    .fields {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .field {
+      display: grid;
+      gap: 6px;
+    }
+    label {
+      font-size: 12px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .08em;
+    }
+    input, select, textarea, button {
+      width: 100%;
+      border-radius: 12px;
+      border: 1px solid rgba(59,43,24,.16);
+      background: rgba(255,255,255,.92);
+      color: var(--text);
+      font: inherit;
+      padding: 11px 12px;
+    }
+    textarea {
+      min-height: 110px;
+      resize: vertical;
+    }
+    button {
+      cursor: pointer;
+      font-weight: 700;
+      transition: transform .12s ease, background .12s ease;
+    }
+    button:hover { transform: translateY(-1px); }
+    .primary { background: var(--accent); color: #fff4ef; border-color: transparent; }
+    .secondary { background: var(--accent-2); color: #effffc; border-color: transparent; }
+    .danger { background: var(--warn); color: #fff0f0; border-color: transparent; }
+    .terminal {
+      background: #1c140d;
+      color: #efd8b1;
+      border-radius: 18px;
+      padding: 14px;
+      min-height: 420px;
+      max-height: 620px;
+      overflow: auto;
+      white-space: pre-wrap;
+      border: 1px solid rgba(255,255,255,.05);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.03);
+    }
+    .terminal .rx { color: #8fe6c9; }
+    .terminal .tx { color: #ffb68a; }
+    .terminal .log { color: #eed9be; }
+    .terminal .warn { color: #ff9898; }
+    .list {
+      display: grid;
+      gap: 10px;
+      max-height: 320px;
+      overflow: auto;
+    }
+    .cmd {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 12px;
+      display: grid;
+      gap: 8px;
+      background: rgba(255,255,255,.6);
+    }
+    .cmd strong { font-size: 15px; }
+    .cmd small { color: var(--muted); }
+    .cmd .row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .cmd button { width: auto; }
+    .rowline {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .muted { color: var(--muted); }
+    .span2 { grid-column: 1 / -1; }
+    @media (max-width: 980px) {
+      .grid { grid-template-columns: 1fr; }
+      .fields { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <section class="hero">
+      <div>
+        <h1>CC1101 RF Monitor</h1>
+        <p>Generic raw RF capture and replay for ESP32 + CC1101. Live terminal, learned commands, manual pulse send, Wi‑Fi STA setup, and an always-available open fallback AP captive portal.</p>
+      </div>
+      <div class="badgebar">
+        <div class="badge" id="badgeVersion">version</div>
+        <div class="badge" id="badgeAp">AP</div>
+        <div class="badge" id="badgeSta">STA</div>
+        <div class="badge" id="badgeRadio">Radio</div>
+      </div>
+    </section>
+
+    <div class="grid">
+      <div class="stack">
+        <section class="panel">
+          <h2>Live Terminal</h2>
+          <div class="terminal" id="terminal"></div>
+        </section>
+
+        <section class="panel">
+          <h2>Manual Send</h2>
+          <div class="fields">
+            <div class="field">
+              <label>Frequency MHz</label>
+              <input id="sendFrequency" type="number" step="0.01">
+            </div>
+            <div class="field">
+              <label>Start Level</label>
+              <select id="sendStartLevel">
+                <option value="0">LOW</option>
+                <option value="1">HIGH</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Repeat Count</label>
+              <input id="sendRepeat" type="number" min="1" max="30">
+            </div>
+            <div class="field">
+              <label>Gap Between Repeats (us)</label>
+              <input id="sendGapUs" type="number" min="1000" step="100">
+            </div>
+            <div class="field span2">
+              <label>Pulses (comma-separated microseconds)</label>
+              <textarea id="sendPulses" placeholder="350,700,350,1050,..."></textarea>
+            </div>
+            <div class="field span2">
+              <button class="primary" id="sendButton">Send Raw Command</button>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <div class="stack">
+        <section class="panel">
+          <h2>Wi‑Fi + Captive Portal</h2>
+          <div class="fields">
+            <div class="field">
+              <label>STA SSID</label>
+              <input id="wifiSsid" autocomplete="off">
+            </div>
+            <div class="field">
+              <label>STA Password</label>
+              <input id="wifiPassword" type="password" autocomplete="new-password">
+            </div>
+            <div class="field">
+              <label>Hostname</label>
+              <input id="hostname">
+            </div>
+            <div class="field">
+              <label>Fallback AP SSID</label>
+              <input id="apSsid">
+            </div>
+            <div class="field span2">
+              <button class="secondary" id="saveWifiButton">Save Wi‑Fi / Host Settings</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2>Radio Settings</h2>
+          <div class="fields">
+            <div class="field">
+              <label>Frequency MHz</label>
+              <input id="radioFrequency" type="number" step="0.01">
+            </div>
+            <div class="field">
+              <label>RX Bandwidth kHz</label>
+              <input id="radioRxBw" type="number" step="0.01">
+            </div>
+            <div class="field">
+              <label>Data Rate kBd</label>
+              <input id="radioDataRate" type="number" step="0.01">
+            </div>
+            <div class="field">
+              <label>Deviation kHz</label>
+              <input id="radioDeviation" type="number" step="0.01">
+            </div>
+            <div class="field">
+              <label>Modulation</label>
+              <select id="radioModulation">
+                <option value="0">2-FSK</option>
+                <option value="1">GFSK</option>
+                <option value="2">ASK/OOK</option>
+                <option value="3">4-FSK</option>
+                <option value="4">MSK</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Manchester</label>
+              <select id="radioManchester">
+                <option value="false">Off</option>
+                <option value="true">On</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>TX Repeat</label>
+              <input id="radioTxRepeat" type="number" min="1" max="30">
+            </div>
+            <div class="field">
+              <label>TX Gap us</label>
+              <input id="radioTxGapUs" type="number" min="1000" step="100">
+            </div>
+            <div class="field span2">
+              <button class="secondary" id="saveRadioButton">Apply Radio Settings</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2>Learned Commands</h2>
+          <div class="rowline" style="margin-bottom:12px">
+            <input id="learnName" placeholder="Name last received command">
+            <button class="primary" id="learnButton">Save Last RX</button>
+          </div>
+          <div class="muted" id="lastFrameMeta">No RX frame captured yet.</div>
+          <div class="list" id="learnedList"></div>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const terminal = document.getElementById('terminal');
+    const learnedList = document.getElementById('learnedList');
+    const lastFrameMeta = document.getElementById('lastFrameMeta');
+    const ws = new WebSocket(`ws://${location.hostname}:81/`);
+
+    const appendLine = (text, cls = 'log') => {
+      const line = document.createElement('div');
+      line.className = cls;
+      line.textContent = text;
+      terminal.appendChild(line);
+      terminal.scrollTop = terminal.scrollHeight;
+    };
+
+    const postJson = async (url, body) => {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      const text = await response.text();
+      if (!response.ok) throw new Error(text || response.statusText);
+      return text ? JSON.parse(text) : {};
+    };
+
+    const parsePulseInput = value => value
+      .split(',')
+      .map(v => Number(v.trim()))
+      .filter(v => Number.isFinite(v) && v > 0);
+
+    const renderLearned = commands => {
+      learnedList.innerHTML = '';
+      if (!commands.length) {
+        learnedList.innerHTML = '<div class="muted">No learned commands saved yet.</div>';
+        return;
+      }
+      for (const cmd of commands) {
+        const item = document.createElement('div');
+        item.className = 'cmd';
+        item.innerHTML = `
+          <strong>${cmd.name}</strong>
+          <small>ID ${cmd.id} • ${cmd.frequency.toFixed(2)} MHz • pulses ${cmd.pulseCount}</small>
+          <div class="row">
+            <button class="secondary" data-send="${cmd.id}">Send</button>
+            <button class="danger" data-delete="${cmd.id}">Delete</button>
+          </div>
+        `;
+        learnedList.appendChild(item);
+      }
+
+      learnedList.querySelectorAll('[data-send]').forEach(button => {
+        button.onclick = async () => {
+          await postJson(`/api/learn/send?id=${button.dataset.send}`, {});
+        };
+      });
+      learnedList.querySelectorAll('[data-delete]').forEach(button => {
+        button.onclick = async () => {
+          await postJson(`/api/learn/delete?id=${button.dataset.delete}`, {});
+        };
+      });
+    };
+
+    const applyState = state => {
+      document.getElementById('badgeVersion').textContent = `${state.name} ${state.version}`;
+      document.getElementById('badgeAp').textContent = `AP ${state.apSsid} ${state.apIp}`;
+      document.getElementById('badgeSta').textContent = state.staConnected
+        ? `STA ${state.staSsid} ${state.staIp}`
+        : 'STA disconnected';
+      document.getElementById('badgeRadio').textContent = state.radioReady
+        ? `Radio ${state.radio.frequency.toFixed(2)} MHz`
+        : 'Radio offline';
+
+      document.getElementById('wifiSsid').value = state.wifi.ssid || '';
+      document.getElementById('hostname').value = state.wifi.hostname || '';
+      document.getElementById('apSsid').value = state.wifi.apSsid || '';
+
+      document.getElementById('radioFrequency').value = state.radio.frequency;
+      document.getElementById('radioRxBw').value = state.radio.rxBandwidth;
+      document.getElementById('radioDataRate').value = state.radio.dataRate;
+      document.getElementById('radioDeviation').value = state.radio.deviation;
+      document.getElementById('radioModulation').value = state.radio.modulation;
+      document.getElementById('radioManchester').value = String(state.radio.manchester);
+      document.getElementById('radioTxRepeat').value = state.radio.txRepeat;
+      document.getElementById('radioTxGapUs').value = state.radio.txGapUs;
+
+      document.getElementById('sendFrequency').value = state.radio.frequency;
+      document.getElementById('sendRepeat').value = state.radio.txRepeat;
+      document.getElementById('sendGapUs').value = state.radio.txGapUs;
+
+      renderLearned(state.learned || []);
+      if (state.lastFrame && state.lastFrame.available) {
+        lastFrameMeta.textContent = `Last RX #${state.lastFrame.id} • ${state.lastFrame.frequency.toFixed(2)} MHz • RSSI ${state.lastFrame.rssi} • pulses ${state.lastFrame.pulseCount}`;
+        document.getElementById('sendStartLevel').value = state.lastFrame.startLevel ? '1' : '0';
+        document.getElementById('sendPulses').value = (state.lastFrame.pulses || []).join(',');
+      } else {
+        lastFrameMeta.textContent = 'No RX frame captured yet.';
+      }
+    };
+
+    fetch('/api/state')
+      .then(r => r.json())
+      .then(state => {
+        applyState(state);
+        (state.logs || []).forEach(line => appendLine(line, 'log'));
+      });
+
+    ws.onopen = () => {
+      appendLine('WebSocket connected', 'log');
+      ws.send(JSON.stringify({ action: 'state' }));
+    };
+
+    ws.onmessage = event => {
+      const msg = JSON.parse(event.data);
+      if (msg.type === 'state') {
+        applyState(msg);
+        return;
+      }
+      if (msg.type === 'log') {
+        appendLine(msg.message, /failed|timeout|error/i.test(msg.message) ? 'warn' : 'log');
+        return;
+      }
+      if (msg.type === 'rx') {
+        appendLine(`RX #${msg.id} ${msg.frequency.toFixed(2)}MHz RSSI ${msg.rssi} start ${msg.startLevel ? 'HIGH' : 'LOW'} pulses ${msg.pulseCount}: ${msg.pulses.join(',')}`, 'rx');
+        lastFrameMeta.textContent = `Last RX #${msg.id} • ${msg.frequency.toFixed(2)} MHz • RSSI ${msg.rssi} • pulses ${msg.pulseCount}`;
+        document.getElementById('sendFrequency').value = msg.frequency;
+        document.getElementById('sendStartLevel').value = msg.startLevel ? '1' : '0';
+        document.getElementById('sendPulses').value = msg.pulses.join(',');
+        return;
+      }
+      if (msg.type === 'tx') {
+        appendLine(`TX ${msg.frequency.toFixed(2)}MHz repeat ${msg.repeat} gap ${msg.gapUs} start ${msg.startLevel ? 'HIGH' : 'LOW'} pulses ${msg.pulseCount}: ${msg.pulses.join(',')}`, 'tx');
+      }
+    };
+
+    document.getElementById('saveWifiButton').onclick = async () => {
+      await postJson('/api/settings', {
+        wifi: {
+          ssid: document.getElementById('wifiSsid').value.trim(),
+          password: document.getElementById('wifiPassword').value,
+          hostname: document.getElementById('hostname').value.trim(),
+          apSsid: document.getElementById('apSsid').value.trim()
+        }
+      });
+      appendLine('Saved Wi-Fi settings', 'log');
+    };
+
+    document.getElementById('saveRadioButton').onclick = async () => {
+      await postJson('/api/settings', {
+        radio: {
+          frequency: Number(document.getElementById('radioFrequency').value),
+          rxBandwidth: Number(document.getElementById('radioRxBw').value),
+          dataRate: Number(document.getElementById('radioDataRate').value),
+          deviation: Number(document.getElementById('radioDeviation').value),
+          modulation: Number(document.getElementById('radioModulation').value),
+          manchester: document.getElementById('radioManchester').value === 'true',
+          txRepeat: Number(document.getElementById('radioTxRepeat').value),
+          txGapUs: Number(document.getElementById('radioTxGapUs').value)
+        }
+      });
+      appendLine('Applied radio settings', 'log');
+    };
+
+    document.getElementById('sendButton').onclick = async () => {
+      const pulses = parsePulseInput(document.getElementById('sendPulses').value);
+      if (!pulses.length) {
+        appendLine('No valid pulses to send', 'warn');
+        return;
+      }
+      await postJson('/api/send', {
+        frequency: Number(document.getElementById('sendFrequency').value),
+        startLevel: document.getElementById('sendStartLevel').value === '1',
+        repeat: Number(document.getElementById('sendRepeat').value),
+        gapUs: Number(document.getElementById('sendGapUs').value),
+        pulses
+      });
+    };
+
+    document.getElementById('learnButton').onclick = async () => {
+      const name = document.getElementById('learnName').value.trim();
+      if (!name) {
+        appendLine('Name is required to save a learned command', 'warn');
+        return;
+      }
+      await postJson('/api/learn/save', { name });
+      document.getElementById('learnName').value = '';
+    };
+  </script>
+</body>
+</html>
