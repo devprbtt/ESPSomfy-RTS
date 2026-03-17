@@ -6,6 +6,7 @@
 #include <math.h>
 #include <Preferences.h>
 #include <SPI.h>
+#include <esp_log.h>
 #include <WebServer.h>
 #include <WebSocketsServer.h>
 #include <WiFi.h>
@@ -34,12 +35,15 @@ static const uint32_t CAPTURE_GAP_US = 6000;
 static const uint16_t MIN_PULSE_US = 80;
 static const uint8_t MIN_FRAME_PULSES = 8;
 static const uint32_t WIFI_CONNECT_TIMEOUT_MS = 20000;
+static const uint8_t ESP_LOG_QUEUE_SIZE = 16;
+static const size_t ESP_LOG_LINE_SIZE = 256;
 
 DNSServer dnsServer;
 WebServer server(HTTP_PORT);
 WebSocketsServer wsServer(WS_PORT);
 WiFiServer telnetServer(TELNET_PORT);
 Preferences prefs;
+vprintf_like_t originalEspLogVprintf = nullptr;
 
 struct RadioSettings {
   char wifiSsid[33] = "";
@@ -55,6 +59,11 @@ struct RadioSettings {
   bool manchester = false;
   uint8_t txRepeat = 4;
   uint32_t txGapUs = 6000;
+  float scanStart = 433.00f;
+  float scanEnd = 434.50f;
+  float scanStep = 0.01f;
+  uint16_t scanDwellMs = 120;
+  bool scanAutoStop = true;
 } settings;
 
 struct PulseFrame {
@@ -105,13 +114,25 @@ struct TelnetClientState {
   uint32_t lastActivity = 0;
 };
 
+struct ScanState {
+  bool enabled = false;
+  float currentFreq = 0.0f;
+  float bestFreq = 0.0f;
+  int bestRssi = -100;
+  uint32_t hitCount = 0;
+  uint32_t lastStepMs = 0;
+  uint32_t holdUntilMs = 0;
+} scanState;
+
 portMUX_TYPE captureMux = portMUX_INITIALIZER_UNLOCKED;
+portMUX_TYPE espLogMux = portMUX_INITIALIZER_UNLOCKED;
 volatile CaptureState isrCapture;
 volatile PulseFrame frameQueue[FRAME_QUEUE_SIZE];
 volatile uint8_t frameQueueHead = 0;
 volatile uint8_t frameQueueTail = 0;
 volatile uint8_t frameQueueCount = 0;
 volatile uint32_t frameSequence = 0;
+bool rxInterruptAttached = false;
 
 LearnedCommand learned[MAX_LEARNED_COMMANDS];
 LogEntry logs[MAX_LOG_ENTRIES];
@@ -126,6 +147,10 @@ bool apStarted = false;
 bool staConnected = false;
 uint32_t wifiConnectStart = 0;
 String apSsid;
+char espLogQueue[ESP_LOG_QUEUE_SIZE][ESP_LOG_LINE_SIZE];
+volatile uint8_t espLogHead = 0;
+volatile uint8_t espLogTail = 0;
+volatile uint8_t espLogCount = 0;
 
 static void applyRadioSettings();
 static void ensureWifi();
@@ -135,6 +160,9 @@ static void setupSockets();
 static void setupTelnet();
 static void handleSockets();
 static void handleTelnet();
+static void handleFrequencyScan();
+static void startFrequencyScan();
+static void stopFrequencyScan(bool keepBest = true);
 static void flushCapturedFrameIfIdle();
 static bool dequeueFrame(PulseFrame &frame);
 static void handleReceivedFrame(PulseFrame &frame);
@@ -144,12 +172,35 @@ static void loadSettings();
 static void saveLearnedCommands();
 static void loadLearnedCommands();
 static void broadcastState(uint8_t clientId = 255);
+static void broadcastScanState(uint8_t clientId = 255);
 static void addLogf(const char *fmt, ...);
 static void sendTextToTelnet(const char *line);
+static void flushEspLogQueue();
 static bool parsePulsesFromJson(JsonVariant src, uint16_t *pulses, uint16_t &count);
 static bool parseSendFrame(JsonVariant src, PulseFrame &frame, uint8_t &repeat, uint32_t &gapUs);
 static void syncClocklessDelay(uint32_t usec);
 template <typename TDoc> static void writeJsonState(TDoc &doc);
+
+static int captureEspLogVprintf(const char *fmt, va_list args) {
+  va_list copy;
+  va_copy(copy, args);
+  char line[ESP_LOG_LINE_SIZE];
+  vsnprintf(line, sizeof(line), fmt, copy);
+  va_end(copy);
+
+  portENTER_CRITICAL(&espLogMux);
+  strlcpy(espLogQueue[espLogHead], line, ESP_LOG_LINE_SIZE);
+  espLogHead = (espLogHead + 1) % ESP_LOG_QUEUE_SIZE;
+  if (espLogCount == ESP_LOG_QUEUE_SIZE) {
+    espLogTail = (espLogTail + 1) % ESP_LOG_QUEUE_SIZE;
+  } else {
+    espLogCount++;
+  }
+  portEXIT_CRITICAL(&espLogMux);
+
+  if (originalEspLogVprintf) return originalEspLogVprintf(fmt, args);
+  return strlen(line);
+}
 
 static uint32_t chipIdShort() {
   const uint64_t mac = ESP.getEfuseMac();
@@ -240,20 +291,25 @@ static void fastWriteTx(bool level) {
 }
 
 static void loadSettings() {
-  prefs.begin("rfmon", true);
-  prefs.getString("wifi_ssid", settings.wifiSsid, sizeof(settings.wifiSsid));
-  prefs.getString("wifi_pass", settings.wifiPassword, sizeof(settings.wifiPassword));
-  prefs.getString("hostname", settings.hostname, sizeof(settings.hostname));
-  prefs.getString("ap_ssid", settings.apSsid, sizeof(settings.apSsid));
-  settings.frequency = prefs.getFloat("freq", settings.frequency);
-  settings.rxBandwidth = prefs.getFloat("rxbw", settings.rxBandwidth);
-  settings.dataRate = prefs.getFloat("drate", settings.dataRate);
-  settings.deviation = prefs.getFloat("dev", settings.deviation);
-  settings.modulation = prefs.getUChar("mod", settings.modulation);
-  settings.txPower = static_cast<int8_t>(prefs.getChar("txpwr", settings.txPower));
-  settings.manchester = prefs.getBool("manch", settings.manchester);
-  settings.txRepeat = prefs.getUChar("txrep", settings.txRepeat);
-  settings.txGapUs = prefs.getUInt("txgap", settings.txGapUs);
+  prefs.begin("rfmon", false);
+  if (prefs.isKey("wifi_ssid")) prefs.getString("wifi_ssid", settings.wifiSsid, sizeof(settings.wifiSsid));
+  if (prefs.isKey("wifi_pass")) prefs.getString("wifi_pass", settings.wifiPassword, sizeof(settings.wifiPassword));
+  if (prefs.isKey("hostname")) prefs.getString("hostname", settings.hostname, sizeof(settings.hostname));
+  if (prefs.isKey("ap_ssid")) prefs.getString("ap_ssid", settings.apSsid, sizeof(settings.apSsid));
+  if (prefs.isKey("freq")) settings.frequency = prefs.getFloat("freq", settings.frequency);
+  if (prefs.isKey("rxbw")) settings.rxBandwidth = prefs.getFloat("rxbw", settings.rxBandwidth);
+  if (prefs.isKey("drate")) settings.dataRate = prefs.getFloat("drate", settings.dataRate);
+  if (prefs.isKey("dev")) settings.deviation = prefs.getFloat("dev", settings.deviation);
+  if (prefs.isKey("mod")) settings.modulation = prefs.getUChar("mod", settings.modulation);
+  if (prefs.isKey("txpwr")) settings.txPower = static_cast<int8_t>(prefs.getChar("txpwr", settings.txPower));
+  if (prefs.isKey("manch")) settings.manchester = prefs.getBool("manch", settings.manchester);
+  if (prefs.isKey("txrep")) settings.txRepeat = prefs.getUChar("txrep", settings.txRepeat);
+  if (prefs.isKey("txgap")) settings.txGapUs = prefs.getUInt("txgap", settings.txGapUs);
+  if (prefs.isKey("scan_start")) settings.scanStart = prefs.getFloat("scan_start", settings.scanStart);
+  if (prefs.isKey("scan_end")) settings.scanEnd = prefs.getFloat("scan_end", settings.scanEnd);
+  if (prefs.isKey("scan_step")) settings.scanStep = prefs.getFloat("scan_step", settings.scanStep);
+  if (prefs.isKey("scan_dwell")) settings.scanDwellMs = prefs.getUShort("scan_dwell", settings.scanDwellMs);
+  if (prefs.isKey("scan_stop")) settings.scanAutoStop = prefs.getBool("scan_stop", settings.scanAutoStop);
   prefs.end();
 
   if (settings.hostname[0] == '\0') strlcpy(settings.hostname, "cc1101-rf-monitor", sizeof(settings.hostname));
@@ -277,6 +333,11 @@ static void saveSettings() {
   prefs.putBool("manch", settings.manchester);
   prefs.putUChar("txrep", settings.txRepeat);
   prefs.putUInt("txgap", settings.txGapUs);
+  prefs.putFloat("scan_start", settings.scanStart);
+  prefs.putFloat("scan_end", settings.scanEnd);
+  prefs.putFloat("scan_step", settings.scanStep);
+  prefs.putUShort("scan_dwell", settings.scanDwellMs);
+  prefs.putBool("scan_stop", settings.scanAutoStop);
   prefs.end();
 }
 
@@ -333,7 +394,14 @@ static void saveLearnedCommands() {
 
 static void loadLearnedCommands() {
   for (uint8_t i = 0; i < MAX_LEARNED_COMMANDS; i++) learned[i] = LearnedCommand();
-  if (!LittleFS.exists("/learned.json")) return;
+  if (!LittleFS.exists("/learned.json")) {
+    File file = LittleFS.open("/learned.json", "w");
+    if (file) {
+      file.print("{\"commands\":[]}");
+      file.close();
+    }
+    return;
+  }
 
   File file = LittleFS.open("/learned.json", "r");
   if (!file) return;
@@ -397,7 +465,10 @@ static void ensureWifi() {
 }
 
 static void applyRadioSettings() {
-  detachInterrupt(digitalPinToInterrupt(CC1101_GDO2_RX_PIN));
+  if (rxInterruptAttached) {
+    detachInterrupt(digitalPinToInterrupt(CC1101_GDO2_RX_PIN));
+    rxInterruptAttached = false;
+  }
   radioReady = false;
 
   ELECHOUSE_cc1101.setGDO(CC1101_GDO0_TX_PIN, CC1101_GDO2_RX_PIN);
@@ -428,6 +499,7 @@ static void applyRadioSettings() {
   fastWriteTx(false);
   ELECHOUSE_cc1101.SetRx();
   attachInterrupt(digitalPinToInterrupt(CC1101_GDO2_RX_PIN), onRadioEdge, CHANGE);
+  rxInterruptAttached = true;
   radioReady = true;
 
   addLogf("Radio ready: freq=%.2fMHz bw=%.2fkHz rate=%.2fkBd mod=%u manchester=%s",
@@ -449,6 +521,44 @@ static void flushCapturedFrameIfIdle() {
   portEXIT_CRITICAL(&captureMux);
 }
 
+static void startFrequencyScan() {
+  scanState.enabled = true;
+  scanState.bestRssi = -100;
+  scanState.bestFreq = settings.scanStart;
+  scanState.currentFreq = settings.scanStart;
+  scanState.hitCount = 0;
+  scanState.lastStepMs = 0;
+  scanState.holdUntilMs = 0;
+  settings.frequency = settings.scanStart;
+  applyRadioSettings();
+  addLogf("Scan started %.2f-%.2f MHz step %.2f dwell %u ms",
+    settings.scanStart, settings.scanEnd, settings.scanStep, settings.scanDwellMs);
+  broadcastScanState();
+}
+
+static void stopFrequencyScan(bool keepBest) {
+  if (!scanState.enabled) return;
+  scanState.enabled = false;
+  if (keepBest && scanState.bestRssi > -100) settings.frequency = scanState.bestFreq;
+  applyRadioSettings();
+  addLogf("Scan stopped best %.2f MHz RSSI %d hits %lu",
+    scanState.bestFreq, scanState.bestRssi, static_cast<unsigned long>(scanState.hitCount));
+  broadcastScanState();
+}
+
+static void handleFrequencyScan() {
+  if (!scanState.enabled || !radioReady) return;
+  if (millis() < scanState.holdUntilMs) return;
+  if (millis() - scanState.lastStepMs < settings.scanDwellMs) return;
+
+  scanState.lastStepMs = millis();
+  scanState.currentFreq += settings.scanStep;
+  if (scanState.currentFreq > settings.scanEnd + 0.0001f) scanState.currentFreq = settings.scanStart;
+  settings.frequency = scanState.currentFreq;
+  ELECHOUSE_cc1101.setMHZ(settings.frequency);
+  broadcastScanState();
+}
+
 static bool dequeueFrame(PulseFrame &frame) {
   bool hasFrame = false;
   portENTER_CRITICAL(&captureMux);
@@ -466,6 +576,19 @@ static void handleReceivedFrame(PulseFrame &frame) {
   frame.rssi = ELECHOUSE_cc1101.getRssi();
   lastReceivedFrame = frame;
   hasLastReceivedFrame = true;
+  if (scanState.enabled) {
+    scanState.hitCount++;
+    if (frame.rssi >= scanState.bestRssi) {
+      scanState.bestRssi = frame.rssi;
+      scanState.bestFreq = frame.frequency;
+      addLogf("Scan hit %.2f MHz RSSI %d pulses %u", frame.frequency, frame.rssi, frame.pulseCount);
+      broadcastScanState();
+    }
+    scanState.holdUntilMs = millis() + 900;
+    if (settings.scanAutoStop && frame.rssi > -65) {
+      stopFrequencyScan(true);
+    }
+  }
 
   DynamicJsonDocument doc(4096);
   doc["type"] = "rx";
@@ -478,8 +601,9 @@ static void handleReceivedFrame(PulseFrame &frame) {
   JsonArray pulses = doc.createNestedArray("pulses");
   for (uint16_t i = 0; i < frame.pulseCount; i++) pulses.add(frame.pulses[i]);
 
-  char payload[4096];
-  serializeJson(doc, payload, sizeof(payload));
+  String payload;
+  payload.reserve(4096);
+  serializeJson(doc, payload);
   wsServer.broadcastTXT(payload);
 
   addLogf("RX #%lu freq=%.2f RSSI=%d start=%s pulses=%u",
@@ -496,7 +620,10 @@ static void sendRawPulses(const PulseFrame &frame, uint8_t repeatOverride, uint3
   const uint8_t repeats = repeatOverride > 0 ? repeatOverride : settings.txRepeat;
   const uint32_t gapUs = gapOverride > 0 ? gapOverride : settings.txGapUs;
 
-  detachInterrupt(digitalPinToInterrupt(CC1101_GDO2_RX_PIN));
+  if (rxInterruptAttached) {
+    detachInterrupt(digitalPinToInterrupt(CC1101_GDO2_RX_PIN));
+    rxInterruptAttached = false;
+  }
   ELECHOUSE_cc1101.SetTx();
   pinMode(CC1101_GDO0_TX_PIN, OUTPUT);
 
@@ -516,6 +643,7 @@ static void sendRawPulses(const PulseFrame &frame, uint8_t repeatOverride, uint3
   fastWriteTx(false);
   ELECHOUSE_cc1101.SetRx();
   attachInterrupt(digitalPinToInterrupt(CC1101_GDO2_RX_PIN), onRadioEdge, CHANGE);
+  rxInterruptAttached = true;
 
   DynamicJsonDocument doc(4096);
   doc["type"] = "tx";
@@ -526,8 +654,9 @@ static void sendRawPulses(const PulseFrame &frame, uint8_t repeatOverride, uint3
   doc["gapUs"] = gapUs;
   JsonArray pulses = doc.createNestedArray("pulses");
   for (uint16_t i = 0; i < frame.pulseCount; i++) pulses.add(frame.pulses[i]);
-  char payload[4096];
-  serializeJson(doc, payload, sizeof(payload));
+  String payload;
+  payload.reserve(4096);
+  serializeJson(doc, payload);
   wsServer.broadcastTXT(payload);
 
   addLogf("TX freq=%.2f repeat=%u gap=%lu start=%s pulses=%u",
@@ -567,6 +696,18 @@ template <typename TDoc> static void writeJsonState(TDoc &doc) {
   radio["manchester"] = settings.manchester;
   radio["txRepeat"] = settings.txRepeat;
   radio["txGapUs"] = settings.txGapUs;
+  radio["scanStart"] = settings.scanStart;
+  radio["scanEnd"] = settings.scanEnd;
+  radio["scanStep"] = settings.scanStep;
+  radio["scanDwellMs"] = settings.scanDwellMs;
+  radio["scanAutoStop"] = settings.scanAutoStop;
+
+  JsonObject scan = doc.createNestedObject("scan");
+  scan["enabled"] = scanState.enabled;
+  scan["currentFreq"] = scanState.currentFreq;
+  scan["bestFreq"] = scanState.bestFreq;
+  scan["bestRssi"] = scanState.bestRssi;
+  scan["hitCount"] = scanState.hitCount;
 
   JsonObject wifi = doc.createNestedObject("wifi");
   wifi["ssid"] = settings.wifiSsid;
@@ -610,13 +751,53 @@ template <typename TDoc> static void writeJsonState(TDoc &doc) {
 }
 
 static void broadcastState(uint8_t clientId) {
-  StaticJsonDocument<8192> doc;
+  DynamicJsonDocument doc(8192);
   doc["type"] = "state";
   writeJsonState(doc);
-  char payload[8192];
-  serializeJson(doc, payload, sizeof(payload));
+  String payload;
+  payload.reserve(8192);
+  serializeJson(doc, payload);
   if (clientId == 255) wsServer.broadcastTXT(payload);
   else wsServer.sendTXT(clientId, payload);
+}
+
+static void broadcastScanState(uint8_t clientId) {
+  DynamicJsonDocument doc(512);
+  doc["type"] = "scan";
+  doc["enabled"] = scanState.enabled;
+  doc["currentFreq"] = scanState.currentFreq;
+  doc["bestFreq"] = scanState.bestFreq;
+  doc["bestRssi"] = scanState.bestRssi;
+  doc["hitCount"] = scanState.hitCount;
+  String payload;
+  payload.reserve(512);
+  serializeJson(doc, payload);
+  if (clientId == 255) wsServer.broadcastTXT(payload);
+  else wsServer.sendTXT(clientId, payload);
+}
+
+static void flushEspLogQueue() {
+  while (espLogCount > 0) {
+    char line[ESP_LOG_LINE_SIZE];
+    portENTER_CRITICAL(&espLogMux);
+    if (espLogCount == 0) {
+      portEXIT_CRITICAL(&espLogMux);
+      break;
+    }
+    strlcpy(line, espLogQueue[espLogTail], sizeof(line));
+    espLogTail = (espLogTail + 1) % ESP_LOG_QUEUE_SIZE;
+    espLogCount--;
+    portEXIT_CRITICAL(&espLogMux);
+
+    DynamicJsonDocument doc(384);
+    doc["type"] = "serial";
+    doc["message"] = line;
+    String payload;
+    payload.reserve(384);
+    serializeJson(doc, payload);
+    wsServer.broadcastTXT(payload);
+    sendTextToTelnet(line);
+  }
 }
 
 static bool parsePulsesFromJson(JsonVariant src, uint16_t *pulses, uint16_t &count) {
@@ -642,9 +823,31 @@ static bool parseSendFrame(JsonVariant src, PulseFrame &frame, uint8_t &repeat, 
 }
 
 static void handleApiState() {
-  StaticJsonDocument<8192> doc;
+  DynamicJsonDocument doc(8192);
   writeJsonState(doc);
   String response;
+  response.reserve(8192);
+  serializeJson(doc, response);
+  server.send(200, "application/json", response);
+}
+
+static void handleApiLastFrame() {
+  DynamicJsonDocument doc(4096);
+  if (hasLastReceivedFrame) {
+    doc["available"] = true;
+    doc["id"] = lastReceivedFrame.id;
+    doc["timestamp"] = lastReceivedFrame.capturedAt;
+    doc["frequency"] = lastReceivedFrame.frequency;
+    doc["rssi"] = lastReceivedFrame.rssi;
+    doc["startLevel"] = lastReceivedFrame.startLevel;
+    doc["pulseCount"] = lastReceivedFrame.pulseCount;
+    JsonArray pulses = doc.createNestedArray("pulses");
+    for (uint16_t i = 0; i < lastReceivedFrame.pulseCount; i++) pulses.add(lastReceivedFrame.pulses[i]);
+  } else {
+    doc["available"] = false;
+  }
+  String response;
+  response.reserve(4096);
   serializeJson(doc, response);
   server.send(200, "application/json", response);
 }
@@ -675,6 +878,11 @@ static void handleApiSettings() {
     settings.manchester = radio["manchester"] | settings.manchester;
     settings.txRepeat = radio["txRepeat"] | settings.txRepeat;
     settings.txGapUs = radio["txGapUs"] | settings.txGapUs;
+    settings.scanStart = radio["scanStart"] | settings.scanStart;
+    settings.scanEnd = radio["scanEnd"] | settings.scanEnd;
+    settings.scanStep = radio["scanStep"] | settings.scanStep;
+    settings.scanDwellMs = radio["scanDwellMs"] | settings.scanDwellMs;
+    settings.scanAutoStop = radio["scanAutoStop"] | settings.scanAutoStop;
   }
 
   saveSettings();
@@ -833,12 +1041,16 @@ static void handleCaptivePortal() {
 static void setupWeb() {
   server.on("/", HTTP_GET, serveIndex);
   server.on("/index.html", HTTP_GET, serveIndex);
+  server.on("/favicon.ico", HTTP_GET, []() { server.send(204, "text/plain", ""); });
   server.on("/api/state", HTTP_GET, handleApiState);
+  server.on("/api/last-frame", HTTP_GET, handleApiLastFrame);
   server.on("/api/settings", HTTP_POST, handleApiSettings);
   server.on("/api/send", HTTP_POST, handleApiSend);
   server.on("/api/learn/save", HTTP_POST, handleApiLearnSave);
   server.on("/api/learn/send", HTTP_POST, handleApiLearnSend);
   server.on("/api/learn/delete", HTTP_POST, handleApiLearnDelete);
+  server.on("/api/scan/start", HTTP_POST, []() { startFrequencyScan(); server.send(200, "application/json", "{\"ok\":true}"); });
+  server.on("/api/scan/stop", HTTP_POST, []() { stopFrequencyScan(true); server.send(200, "application/json", "{\"ok\":true}"); });
 
   server.on("/generate_204", HTTP_GET, handleCaptivePortal);
   server.on("/hotspot-detect.html", HTTP_GET, handleCaptivePortal);
@@ -862,6 +1074,11 @@ static void handleSocketMessage(uint8_t clientId, uint8_t *payload, size_t lengt
   const char *action = doc["action"] | "";
   if (strcmp(action, "state") == 0) {
     broadcastState(clientId);
+    broadcastScanState(clientId);
+  } else if (strcmp(action, "scanStart") == 0) {
+    startFrequencyScan();
+  } else if (strcmp(action, "scanStop") == 0) {
+    stopFrequencyScan(true);
   } else if (strcmp(action, "send") == 0) {
     PulseFrame frame;
     uint8_t repeat = settings.txRepeat;
@@ -916,6 +1133,8 @@ static void handleTelnetCommand(TelnetClientState &clientState, char *line) {
     clientState.client.println("status");
     clientState.client.println("radio");
     clientState.client.println("set freq <mhz>");
+    clientState.client.println("scan start");
+    clientState.client.println("scan stop");
     clientState.client.println("learn list");
     clientState.client.println("learn send <id>");
     clientState.client.println("learn delete <id>");
@@ -936,6 +1155,16 @@ static void handleTelnetCommand(TelnetClientState &clientState, char *line) {
     clientState.client.printf("freq=%.2f bw=%.2f rate=%.2f deviation=%.2f mod=%u manchester=%s txPower=%d repeat=%u gap=%lu\r\n",
       settings.frequency, settings.rxBandwidth, settings.dataRate, settings.deviation, settings.modulation,
       settings.manchester ? "on" : "off", settings.txPower, settings.txRepeat, static_cast<unsigned long>(settings.txGapUs));
+    clientState.client.printf("scan enabled=%s current=%.2f best=%.2f bestRssi=%d range=%.2f-%.2f step=%.2f dwell=%u autoStop=%s\r\n",
+      scanState.enabled ? "yes" : "no",
+      scanState.currentFreq,
+      scanState.bestFreq,
+      scanState.bestRssi,
+      settings.scanStart,
+      settings.scanEnd,
+      settings.scanStep,
+      settings.scanDwellMs,
+      settings.scanAutoStop ? "yes" : "no");
     return;
   }
 
@@ -997,6 +1226,20 @@ static void handleTelnetCommand(TelnetClientState &clientState, char *line) {
       saveLearnedCommands();
       broadcastState();
       clientState.client.println("Deleted");
+      return;
+    }
+  }
+
+  if (strcmp(command, "scan") == 0) {
+    char *sub = strtok(nullptr, " ");
+    if (sub && strcmp(sub, "start") == 0) {
+      startFrequencyScan();
+      clientState.client.println("Scan started");
+      return;
+    }
+    if (sub && strcmp(sub, "stop") == 0) {
+      stopFrequencyScan(true);
+      clientState.client.println("Scan stopped");
       return;
     }
   }
@@ -1076,6 +1319,7 @@ void setup() {
   delay(250);
   Serial.println();
   Serial.println(FW_NAME);
+  originalEspLogVprintf = esp_log_set_vprintf(captureEspLogVprintf);
 
   if (!LittleFS.begin(true)) {
     Serial.println("LittleFS mount failed");
@@ -1096,7 +1340,9 @@ void loop() {
   server.handleClient();
   handleSockets();
   handleTelnet();
+  flushEspLogQueue();
   flushCapturedFrameIfIdle();
+  handleFrequencyScan();
 
   PulseFrame frame;
   while (dequeueFrame(frame)) {

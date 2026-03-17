@@ -126,8 +126,16 @@
       max-height: 620px;
       overflow: auto;
       white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      word-break: break-word;
       border: 1px solid rgba(255,255,255,.05);
       box-shadow: inset 0 1px 0 rgba(255,255,255,.03);
+    }
+    .terminal > div {
+      max-width: 100%;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      word-break: break-word;
     }
     .terminal .rx { color: #8fe6c9; }
     .terminal .tx { color: #ffb68a; }
@@ -294,8 +302,38 @@
               <label>TX Gap us</label>
               <input id="radioTxGapUs" type="number" min="1000" step="100">
             </div>
+            <div class="field">
+              <label>Scan Start MHz</label>
+              <input id="scanStart" type="number" step="0.01">
+            </div>
+            <div class="field">
+              <label>Scan End MHz</label>
+              <input id="scanEnd" type="number" step="0.01">
+            </div>
+            <div class="field">
+              <label>Scan Step MHz</label>
+              <input id="scanStep" type="number" step="0.01">
+            </div>
+            <div class="field">
+              <label>Scan Dwell ms</label>
+              <input id="scanDwellMs" type="number" min="20" step="10">
+            </div>
+            <div class="field">
+              <label>Auto Stop On Strong Hit</label>
+              <select id="scanAutoStop">
+                <option value="true">On</option>
+                <option value="false">Off</option>
+              </select>
+            </div>
             <div class="field span2">
               <button class="secondary" id="saveRadioButton">Apply Radio Settings</button>
+            </div>
+            <div class="field span2">
+              <div class="rowline">
+                <button class="primary" id="scanStartButton">Start Scan</button>
+                <button class="secondary" id="scanStopButton">Stop Scan</button>
+                <span class="muted" id="scanMeta">Scanner idle.</span>
+              </div>
             </div>
           </div>
         </section>
@@ -317,6 +355,7 @@
     const terminal = document.getElementById('terminal');
     const learnedList = document.getElementById('learnedList');
     const lastFrameMeta = document.getElementById('lastFrameMeta');
+    const scanMeta = document.getElementById('scanMeta');
     const ws = new WebSocket(`ws://${location.hostname}:81/`);
 
     const appendLine = (text, cls = 'log') => {
@@ -397,10 +436,20 @@
       document.getElementById('radioManchester').value = String(state.radio.manchester);
       document.getElementById('radioTxRepeat').value = state.radio.txRepeat;
       document.getElementById('radioTxGapUs').value = state.radio.txGapUs;
+      document.getElementById('scanStart').value = state.radio.scanStart;
+      document.getElementById('scanEnd').value = state.radio.scanEnd;
+      document.getElementById('scanStep').value = state.radio.scanStep;
+      document.getElementById('scanDwellMs').value = state.radio.scanDwellMs;
+      document.getElementById('scanAutoStop').value = String(state.radio.scanAutoStop);
 
       document.getElementById('sendFrequency').value = state.radio.frequency;
       document.getElementById('sendRepeat').value = state.radio.txRepeat;
       document.getElementById('sendGapUs').value = state.radio.txGapUs;
+      if (state.scan) {
+        scanMeta.textContent = state.scan.enabled
+          ? `Scanning ${state.scan.currentFreq.toFixed(2)} MHz • best ${state.scan.bestFreq.toFixed(2)} MHz RSSI ${state.scan.bestRssi} • hits ${state.scan.hitCount}`
+          : `Scanner idle. Best ${state.scan.bestFreq.toFixed(2)} MHz RSSI ${state.scan.bestRssi} • hits ${state.scan.hitCount}`;
+      }
 
       renderLearned(state.learned || []);
       if (state.lastFrame && state.lastFrame.available) {
@@ -432,6 +481,16 @@
       }
       if (msg.type === 'log') {
         appendLine(msg.message, /failed|timeout|error/i.test(msg.message) ? 'warn' : 'log');
+        return;
+      }
+      if (msg.type === 'serial') {
+        appendLine(msg.message, /error|warn|failed|not found/i.test(msg.message) ? 'warn' : 'log');
+        return;
+      }
+      if (msg.type === 'scan') {
+        scanMeta.textContent = msg.enabled
+          ? `Scanning ${msg.currentFreq.toFixed(2)} MHz • best ${msg.bestFreq.toFixed(2)} MHz RSSI ${msg.bestRssi} • hits ${msg.hitCount}`
+          : `Scanner idle. Best ${msg.bestFreq.toFixed(2)} MHz RSSI ${msg.bestRssi} • hits ${msg.hitCount}`;
         return;
       }
       if (msg.type === 'rx') {
@@ -469,10 +528,25 @@
           modulation: Number(document.getElementById('radioModulation').value),
           manchester: document.getElementById('radioManchester').value === 'true',
           txRepeat: Number(document.getElementById('radioTxRepeat').value),
-          txGapUs: Number(document.getElementById('radioTxGapUs').value)
+          txGapUs: Number(document.getElementById('radioTxGapUs').value),
+          scanStart: Number(document.getElementById('scanStart').value),
+          scanEnd: Number(document.getElementById('scanEnd').value),
+          scanStep: Number(document.getElementById('scanStep').value),
+          scanDwellMs: Number(document.getElementById('scanDwellMs').value),
+          scanAutoStop: document.getElementById('scanAutoStop').value === 'true'
         }
       });
       appendLine('Applied radio settings', 'log');
+    };
+
+    document.getElementById('scanStartButton').onclick = async () => {
+      await postJson('/api/scan/start', {});
+      appendLine('Frequency scan started', 'log');
+    };
+
+    document.getElementById('scanStopButton').onclick = async () => {
+      await postJson('/api/scan/stop', {});
+      appendLine('Frequency scan stopped', 'log');
     };
 
     document.getElementById('sendButton').onclick = async () => {
