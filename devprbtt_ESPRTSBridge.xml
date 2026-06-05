@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<component manufacturer="devprbtt" model="ESPRTSBridge" rpm_xml_version="2.0" minimum_component_engine_version="8.10"
+<component manufacturer="devprbtt" model="ESPRTSBridge" rpm_xml_version="2.2" minimum_component_engine_version="8.10"
           xsi:noNamespaceSchemaLocation="racepoint_component_profile.xsd"
           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
           alias="Somfy RTS Telnet Shade Controller"
@@ -110,6 +110,26 @@
                 <constant type="character">:</constant>
                 <data type="character" terminator=",&quot;target&quot;" terminator_type="character">
                     <update state="CurrentShadePosition" type="integer"></update>
+                </data>
+
+                <constant type="character">:</constant>
+                <data type="character" terminator=",&quot;dir&quot;" terminator_type="character">
+                    <update state="CurrentShadeTarget" type="integer"></update>
+                </data>
+
+                <constant type="character">:</constant>
+                <data type="character" terminator=",&quot;addr&quot;" terminator_type="character">
+                    <update state="CurrentMotorDirection" type="integer"></update>
+                </data>
+
+                <constant type="character">:</constant>
+                <data type="character" terminator=",&quot;flags&quot;" terminator_type="character">
+                    <update state="trash_addr" type="string"></update>
+                </data>
+
+                <constant type="character">:</constant>
+                <data type="character" terminator_type="end_of_data">
+                    <update state="trash_flags" type="string"></update>
                 </data>
 
                 <append_data_to_state_names state="CurrentMotorAddress"/>
