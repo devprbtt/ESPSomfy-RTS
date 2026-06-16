@@ -2,6 +2,7 @@
 #include <ctype.h>
 #include <esp_task_wdt.h>
 #include "TelnetServer.h"
+#include "DinplugBridge.h"
 
 extern SomfyShadeController somfy;
 
@@ -59,7 +60,7 @@ void TelnetServer::printAllShades(TelnetClient &c) {
 }
 void TelnetServer::printHelp(TelnetClient &c) {
   if(!c.client || !c.client.connected()) return;
-  this->sendJson(c, "{\"event\":\"help\",\"commands\":[\"list\",\"shade <id>\",\"target <id> <0-100>\",\"cmd <id> <cmd> [repeat] [step]\",\"exit\"]}");
+  this->sendJson(c, "{\"event\":\"help\",\"commands\":[\"list\",\"shade <id>\",\"target <id> <0-100>\",\"cmd <id> <cmd> [repeat] [step]\",\"dinplug ...\",\"exit\"]}");
 }
 void TelnetServer::handleLine(TelnetClient &tc, char *line) {
   if(!line || !tc.client || !tc.client.connected()) return;
@@ -133,6 +134,106 @@ void TelnetServer::handleLine(TelnetClient &tc, char *line) {
     this->sendJsonf(tc, "{\"event\":\"command\",\"id\":%u,\"cmd\":\"%s\",\"repeat\":%u,\"step\":%u}",
       shadeId, commandTok, repeat > 0 ? repeat : shade->repeats, stepSize);
     this->printShadeJson(tc, shade, "update");
+    return;
+  }
+  else if(strcmp(cmd, "dinplug") == 0) {
+    char *sub = strtok(nullptr, " ");
+    if(!sub || strcmp(sub, "help") == 0) {
+      dinplugBridge.printHelp(tc.client);
+      return;
+    }
+    for(char *p = sub; *p; ++p) *p = tolower(*p);
+    if(strcmp(sub, "status") == 0) {
+      dinplugBridge.printStatus(tc.client);
+      return;
+    }
+    if(strcmp(sub, "connect") == 0) {
+      String msg;
+      dinplugBridge.connectNow(msg);
+      tc.client.print(msg);
+      tc.client.print("\r\n");
+      return;
+    }
+    if(strcmp(sub, "disconnect") == 0) {
+      String msg;
+      dinplugBridge.disconnect(msg);
+      tc.client.print(msg);
+      tc.client.print("\r\n");
+      return;
+    }
+    if(strcmp(sub, "host") == 0) {
+      String msg;
+      char *host = strtok(nullptr, "");
+      dinplugBridge.setGatewayHost(host, msg);
+      tc.client.print(msg);
+      tc.client.print("\r\n");
+      return;
+    }
+    if(strcmp(sub, "auto") == 0) {
+      char *mode = strtok(nullptr, " ");
+      String msg;
+      if(!mode) {
+        this->sendJson(tc, "{\"event\":\"error\",\"msg\":\"Usage: dinplug auto <on|off>\"}");
+        return;
+      }
+      const bool enabled = strcasecmp(mode, "on") == 0 || strcasecmp(mode, "true") == 0 || strcmp(mode, "1") == 0;
+      dinplugBridge.setAutoConnect(enabled, msg);
+      tc.client.print(msg);
+      tc.client.print("\r\n");
+      return;
+    }
+    if(strcmp(sub, "map") == 0) {
+      char *verb = strtok(nullptr, " ");
+      if(!verb || strcmp(verb, "list") == 0) {
+        dinplugBridge.printMappings(tc.client);
+        return;
+      }
+      for(char *p = verb; *p; ++p) *p = tolower(*p);
+      if(strcmp(verb, "clear") == 0) {
+        String msg;
+        dinplugBridge.clearMappings(msg);
+        tc.client.print(msg);
+        tc.client.print("\r\n");
+        return;
+      }
+      if(strcmp(verb, "del") == 0) {
+        char *idxTok = strtok(nullptr, " ");
+        if(!idxTok) {
+          this->sendJson(tc, "{\"event\":\"error\",\"msg\":\"Usage: dinplug map del <index>\"}");
+          return;
+        }
+        String msg;
+        dinplugBridge.removeMapping(static_cast<uint8_t>(atoi(idxTok)), msg);
+        tc.client.print(msg);
+        tc.client.print("\r\n");
+        return;
+      }
+      if(strcmp(verb, "add") == 0) {
+        char *keypadTok = strtok(nullptr, " ");
+        char *buttonTok = strtok(nullptr, " ");
+        char *actionTok = strtok(nullptr, " ");
+        char *targetTypeTok = strtok(nullptr, " ");
+        char *targetIdTok = strtok(nullptr, " ");
+        char *commandTok = strtok(nullptr, " ");
+        char *valueTok = strtok(nullptr, " ");
+        if(!keypadTok || !buttonTok || !actionTok || !targetTypeTok || !targetIdTok || !commandTok) {
+          this->sendJson(tc, "{\"event\":\"error\",\"msg\":\"Usage: dinplug map add <keypadId> <buttonId> <press|release|hold|double> <shade|group> <targetId> <command|target|cycle> [value]\"}");
+          return;
+        }
+        String msg;
+        dinplugBridge.addMapping(static_cast<uint16_t>(atoi(keypadTok)),
+                                 static_cast<uint16_t>(atoi(buttonTok)),
+                                 actionTok, targetTypeTok,
+                                 static_cast<uint8_t>(atoi(targetIdTok)),
+                                 commandTok,
+                                 valueTok ? atoi(valueTok) : 0,
+                                 msg);
+        tc.client.print(msg);
+        tc.client.print("\r\n");
+        return;
+      }
+    }
+    this->sendJson(tc, "{\"event\":\"error\",\"msg\":\"Unknown dinplug command\"}");
     return;
   }
   else if(strcmp(cmd, "exit") == 0 || strcmp(cmd, "quit") == 0 || strcmp(cmd, "bye") == 0) {

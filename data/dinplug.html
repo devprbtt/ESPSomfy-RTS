@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dinplug Bridge</title>
+  <link rel="stylesheet" href="main.css?v=2.4.7c" type="text/css" />
+  <style>
+    body{padding:16px;max-width:1100px;margin:0 auto}
+    .panel{background:#fff;border-radius:10px;padding:16px;margin:16px 0;box-shadow:0 1px 3px rgba(0,0,0,.12)}
+    .row{display:flex;gap:12px;flex-wrap:wrap}
+    .field{flex:1 1 180px}
+    label{display:block;font-weight:600;margin-bottom:6px}
+    input,select{width:100%;padding:10px;border:1px solid #cfd8dc;border-radius:8px}
+    button{padding:10px 14px;border:0;border-radius:8px;background:#00bcd4;color:#fff;font-weight:700;cursor:pointer}
+    button.alt{background:#607d8b}
+    button.danger{background:#ef5350}
+    table{width:100%;border-collapse:collapse}
+    th,td{padding:10px;border-bottom:1px solid #eceff1;text-align:left;font-size:14px}
+    .status{font-family:monospace;white-space:pre-wrap;background:#f5f7f8;padding:12px;border-radius:8px}
+  </style>
+</head>
+<body>
+  <h1>Dinplug Bridge</h1>
+  <p><a href="/">Back to ESPSomfy RTS</a></p>
+
+  <div class="panel">
+    <h2>Gateway</h2>
+    <div id="status" class="status">Loading...</div>
+    <div class="row" style="margin-top:12px">
+      <div class="field">
+        <label for="gatewayHost">Gateway Host</label>
+        <input id="gatewayHost" placeholder="192.168.1.50">
+      </div>
+      <div class="field" style="max-width:180px">
+        <label for="autoConnect">Auto Connect</label>
+        <select id="autoConnect">
+          <option value="true">On</option>
+          <option value="false">Off</option>
+        </select>
+      </div>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button onclick="saveSettings()">Save Settings</button>
+      <button class="alt" onclick="toggleConnect(true)">Connect</button>
+      <button class="danger" onclick="toggleConnect(false)">Disconnect</button>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Add Mapping</h2>
+    <div class="row">
+      <div class="field"><label>Keypad ID</label><input id="keypadId" type="number" min="1"></div>
+      <div class="field"><label>Button ID</label><input id="buttonId" type="number" min="1"></div>
+      <div class="field"><label>Action</label><select id="action"><option>press</option><option>release</option><option>hold</option><option>double</option></select></div>
+      <div class="field"><label>Target Type</label><select id="targetType" onchange="updateTargetPicker()"><option>shade</option><option>group</option></select></div>
+      <div class="field" id="shadePickerField"><label>Shade</label><select id="shadeTarget"></select></div>
+      <div class="field" id="groupPickerField" style="display:none"><label>Group</label><select id="groupTarget"></select></div>
+      <div class="field" id="targetFallbackField" style="display:none"><label>Target ID</label><input id="targetId" type="number" min="1"></div>
+      <div class="field"><label>Command</label><input id="command" placeholder="up, down, my, target, cycle"></div>
+      <div class="field"><label>Value</label><input id="value" type="number" min="0" max="100" placeholder="Only for target"></div>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button onclick="addMapping()">Add Mapping</button>
+      <button class="danger" onclick="clearMappings()">Clear All</button>
+    </div>
+    <p style="margin-top:12px;color:#607d8b">Add multiple rows with the same keypad, button, and action to make one button control multiple shades together. Use <code>cycle</code> for the sequence: up, stop, down, then repeat.</p>
+  </div>
+
+  <div class="panel">
+    <h2>Mappings</h2>
+    <table>
+      <thead>
+        <tr><th>#</th><th>Keypad</th><th>Button</th><th>Action</th><th>Target</th><th>Command</th><th>Action</th></tr>
+      </thead>
+      <tbody id="mappingRows"></tbody>
+    </table>
+  </div>
+
+  <script>
+    let shades = [];
+    let groups = [];
+    async function req(url, options={}) {
+      const res = await fetch(url, Object.assign({headers:{'Content-Type':'application/json'}}, options));
+      const text = await res.text();
+      try { return JSON.parse(text); } catch { return {raw:text, ok:res.ok}; }
+    }
+    function optionLabel(item, type) {
+      const id = item.shadeId ?? item.groupId ?? item.id ?? 0;
+      const name = item.name || `${type} ${id}`;
+      return `${name} (${id})`;
+    }
+    function fillSelect(el, items, type, idKey) {
+      if (!items.length) {
+        el.innerHTML = `<option value="">No ${type}s found</option>`;
+        return;
+      }
+      el.innerHTML = items.map(item => {
+        const id = item[idKey];
+        return `<option value="${id}">${optionLabel(item, type)}</option>`;
+      }).join('');
+    }
+    function updateTargetPicker() {
+      const type = document.getElementById('targetType').value;
+      const shadeField = document.getElementById('shadePickerField');
+      const groupField = document.getElementById('groupPickerField');
+      const fallbackField = document.getElementById('targetFallbackField');
+      const noShades = !shades.length;
+      const noGroups = !groups.length;
+      shadeField.style.display = type === 'shade' && !noShades ? '' : 'none';
+      groupField.style.display = type === 'group' && !noGroups ? '' : 'none';
+      fallbackField.style.display = (type === 'shade' && noShades) || (type === 'group' && noGroups) ? '' : 'none';
+    }
+    function currentTargetId() {
+      const type = document.getElementById('targetType').value;
+      if (type === 'shade' && shades.length) return Number(document.getElementById('shadeTarget').value || 0);
+      if (type === 'group' && groups.length) return Number(document.getElementById('groupTarget').value || 0);
+      return Number(document.getElementById('targetId').value || 0);
+    }
+    function setStatus(obj){
+      document.getElementById('status').textContent =
+        `Host: ${obj.gatewayHost || '-'}\nAuto connect: ${obj.autoConnect}\nConnected: ${obj.connected}\nMappings: ${obj.mappingCount}\nStatus: ${obj.status}`;
+      document.getElementById('gatewayHost').value = obj.gatewayHost || '';
+      document.getElementById('autoConnect').value = String(!!obj.autoConnect);
+    }
+    function renderMappings(data){
+      const tbody = document.getElementById('mappingRows');
+      const rows = (data.mappings || []).map(m => `
+        <tr>
+          <td>${m.index}</td>
+          <td>${m.keypadId}</td>
+          <td>${m.buttonId}</td>
+          <td>${m.action}</td>
+          <td>${m.targetType} ${m.targetId}</td>
+          <td>${m.command}${m.value != null ? ' ' + m.value : ''}</td>
+          <td><button class="danger" onclick="deleteMapping(${m.index})">Delete</button></td>
+        </tr>`).join('');
+      tbody.innerHTML = rows || '<tr><td colspan="7">No mappings yet.</td></tr>';
+    }
+    async function loadAll(){
+      const [settings, mappingData, shadeData, groupData] = await Promise.all([
+        req('/dinplug/settings'),
+        req('/dinplug/mappings'),
+        req('/shades'),
+        req('/groups')
+      ]);
+      shades = Array.isArray(shadeData) ? shadeData : [];
+      groups = Array.isArray(groupData) ? groupData : [];
+      fillSelect(document.getElementById('shadeTarget'), shades, 'shade', 'shadeId');
+      fillSelect(document.getElementById('groupTarget'), groups, 'group', 'groupId');
+      updateTargetPicker();
+      setStatus(settings);
+      renderMappings(mappingData);
+    }
+    async function saveSettings(){
+      const payload = {
+        gatewayHost: document.getElementById('gatewayHost').value.trim(),
+        autoConnect: document.getElementById('autoConnect').value === 'true'
+      };
+      await req('/dinplug/settings', {method:'POST', body:JSON.stringify(payload)});
+      await loadAll();
+    }
+    async function toggleConnect(connect){
+      await req('/dinplug/connect', {method:'POST', body:JSON.stringify({connect})});
+      await loadAll();
+    }
+    async function addMapping(){
+      const payload = {
+        keypadId: Number(document.getElementById('keypadId').value || 0),
+        buttonId: Number(document.getElementById('buttonId').value || 0),
+        action: document.getElementById('action').value,
+        targetType: document.getElementById('targetType').value,
+        targetId: currentTargetId(),
+        command: document.getElementById('command').value.trim(),
+        value: Number(document.getElementById('value').value || 0)
+      };
+      await req('/dinplug/mappings', {method:'POST', body:JSON.stringify(payload)});
+      await loadAll();
+    }
+    async function deleteMapping(index){
+      await fetch('/dinplug/mappings?index=' + index, {method:'DELETE'});
+      await loadAll();
+    }
+    async function clearMappings(){
+      await fetch('/dinplug/mappings', {method:'DELETE'});
+      await loadAll();
+    }
+    loadAll();
+  </script>
+</body>
+</html>

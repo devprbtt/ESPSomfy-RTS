@@ -14,6 +14,7 @@
 #include "MQTT.h"
 #include "GitOTA.h"
 #include "Network.h"
+#include "DinplugBridge.h"
 
 extern ConfigSettings settings;
 extern SSDPClass SSDP;
@@ -23,6 +24,7 @@ extern Web webServer;
 extern MQTTClass mqtt;
 extern GitUpdater git;
 extern Network net;
+extern DinplugBridge dinplugBridge;
 
 //#define WEB_MAX_RESPONSE 34768
 #define WEB_MAX_RESPONSE 4096
@@ -1055,6 +1057,117 @@ void Web::handleReboot(WebServer &server) {
     server.send(201, _encoding_json, "{\"status\":\"ERROR\",\"desc\":\"Invalid HTTP Method: \"}");
   }
 }
+void Web::handleDinplugSettings(WebServer &server) {
+  webServer.sendCORSHeaders(server);
+  if(server.method() == HTTP_OPTIONS) { server.send(200, "OK"); return; }
+  if(server.method() == HTTP_GET) {
+    DynamicJsonDocument doc(1024);
+    JsonObject obj = doc.to<JsonObject>();
+    dinplugBridge.toJSON(obj);
+    serializeJson(doc, g_content);
+    server.send(200, _encoding_json, g_content);
+    return;
+  }
+  if(server.method() != HTTP_POST && server.method() != HTTP_PUT) {
+    server.send(405, _encoding_json, "{\"status\":\"ERROR\",\"desc\":\"Invalid HTTP Method\"}");
+    return;
+  }
+  DynamicJsonDocument doc(512);
+  DeserializationError err = deserializeJson(doc, server.arg("plain"));
+  if(err) {
+    webServer.handleDeserializationError(server, err);
+    return;
+  }
+  JsonObject obj = doc.as<JsonObject>();
+  String msg;
+  if(obj.containsKey("gatewayHost")) {
+    if(!dinplugBridge.setGatewayHost(obj["gatewayHost"] | "", msg)) {
+      server.send(400, _encoding_json, msg);
+      return;
+    }
+  }
+  if(obj.containsKey("autoConnect")) dinplugBridge.setAutoConnect(obj["autoConnect"] | false, msg);
+  DynamicJsonDocument respDoc(1024);
+  JsonObject resp = respDoc.to<JsonObject>();
+  dinplugBridge.toJSON(resp);
+  serializeJson(respDoc, g_content);
+  server.send(200, _encoding_json, g_content);
+}
+
+void Web::handleDinplugMappings(WebServer &server) {
+  webServer.sendCORSHeaders(server);
+  if(server.method() == HTTP_OPTIONS) { server.send(200, "OK"); return; }
+  if(server.method() == HTTP_GET) {
+    DynamicJsonDocument doc(8192);
+    JsonObject obj = doc.to<JsonObject>();
+    JsonArray arr = obj.createNestedArray("mappings");
+    dinplugBridge.mappingsToJSON(arr);
+    serializeJson(doc, g_content);
+    server.send(200, _encoding_json, g_content);
+    return;
+  }
+  if(server.method() == HTTP_DELETE) {
+    String msg;
+    if(server.hasArg("index")) {
+      if(!dinplugBridge.removeMapping(static_cast<uint8_t>(server.arg("index").toInt()), msg)) {
+        server.send(400, _encoding_json, msg);
+        return;
+      }
+    }
+    else {
+      dinplugBridge.clearMappings(msg);
+    }
+    server.send(200, _encoding_json, msg);
+    return;
+  }
+  if(server.method() != HTTP_POST && server.method() != HTTP_PUT) {
+    server.send(405, _encoding_json, "{\"status\":\"ERROR\",\"desc\":\"Invalid HTTP Method\"}");
+    return;
+  }
+  DynamicJsonDocument doc(1024);
+  DeserializationError err = deserializeJson(doc, server.arg("plain"));
+  if(err) {
+    webServer.handleDeserializationError(server, err);
+    return;
+  }
+  JsonObject obj = doc.as<JsonObject>();
+  String msg;
+  if(!dinplugBridge.addMapping(obj["keypadId"] | 0,
+                               obj["buttonId"] | 0,
+                               obj["action"] | "press",
+                               obj["targetType"] | "shade",
+                               obj["targetId"] | 0,
+                               obj["command"] | "My",
+                               obj["value"] | 0,
+                               msg)) {
+    server.send(400, _encoding_json, msg);
+    return;
+  }
+  server.send(200, _encoding_json, msg);
+}
+
+void Web::handleDinplugConnect(WebServer &server) {
+  webServer.sendCORSHeaders(server);
+  if(server.method() == HTTP_OPTIONS) { server.send(200, "OK"); return; }
+  if(server.method() != HTTP_POST && server.method() != HTTP_PUT) {
+    server.send(405, _encoding_json, "{\"status\":\"ERROR\",\"desc\":\"Invalid HTTP Method\"}");
+    return;
+  }
+  DynamicJsonDocument doc(256);
+  if(server.arg("plain").length() > 0) {
+    DeserializationError err = deserializeJson(doc, server.arg("plain"));
+    if(err) {
+      webServer.handleDeserializationError(server, err);
+      return;
+    }
+  }
+  const bool connect = !doc["connect"].isNull() ? static_cast<bool>(doc["connect"]) : true;
+  String msg;
+  if(connect) dinplugBridge.connectNow(msg);
+  else dinplugBridge.disconnect(msg);
+  server.send(200, _encoding_json, msg);
+}
+
 void Web::begin() {
   Serial.println("Creating Web MicroServices...");
   server.enableCORS(true);
@@ -1082,6 +1195,9 @@ void Web::begin() {
   apiServer.on("/downloadFirmware", []() { webServer.handleDownloadFirmware(apiServer); });
   apiServer.on("/backup", []() { webServer.handleBackup(apiServer); });
   apiServer.on("/reboot", []() { webServer.handleReboot(apiServer); });
+  apiServer.on("/dinplug/settings", []() { webServer.handleDinplugSettings(apiServer); });
+  apiServer.on("/dinplug/mappings", []() { webServer.handleDinplugMappings(apiServer); });
+  apiServer.on("/dinplug/connect", []() { webServer.handleDinplugConnect(apiServer); });
   
   // Web Interface
   server.on("/tiltCommand", []() { webServer.handleTiltCommand(server); });
@@ -1092,6 +1208,7 @@ void Web::begin() {
   server.on("/setSensor", []() { webServer.handleSetSensor(server); });
   server.on("/upnp.xml", []() { SSDP.schema(server.client()); });
   server.on("/", []() { webServer.handleStreamFile(server, "/index.html", _encoding_html); });
+  server.on("/dinplug", []() { webServer.handleStreamFile(server, "/dinplug.html", _encoding_html); });
   server.on("/login", []() { webServer.handleLogin(server); });
   server.on("/loginContext", []() { webServer.handleLoginContext(server); });
   server.on("/shades.cfg", []() { webServer.handleStreamFile(server, "/shades.cfg", _encoding_text); });
@@ -1187,6 +1304,10 @@ void Web::begin() {
   server.on("/icon.png", []() { webServer.sendCacheHeaders(604800); webServer.handleStreamFile(server, "/icon.png", "image/png"); });
   server.on("/icon.svg", []() { webServer.sendCacheHeaders(604800); webServer.handleStreamFile(server, "/icon.svg", "image/svg+xml"); });
   server.on("/apple-icon.png", []() { webServer.sendCacheHeaders(604800); webServer.handleStreamFile(server, "/apple-icon.png", "image/png"); });
+  server.on("/dinplug.html", []() { webServer.sendCacheHeaders(60); webServer.handleStreamFile(server, "/dinplug.html", _encoding_html); });
+  server.on("/dinplug/settings", []() { webServer.handleDinplugSettings(server); });
+  server.on("/dinplug/mappings", []() { webServer.handleDinplugMappings(server); });
+  server.on("/dinplug/connect", []() { webServer.handleDinplugConnect(server); });
   server.onNotFound([]() { webServer.handleNotFound(server); });
   server.on("/controller", []() { webServer.handleController(server); });
   server.on("/rooms", []() { webServer.handleGetRooms(server); });

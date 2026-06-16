@@ -28,6 +28,9 @@ class Web {
     void handleGroup(WebServer &server);
     void handleSetPositions(WebServer &server);
     void handleSetSensor(WebServer &server);
+    void handleDinplugSettings(WebServer &server);
+    void handleDinplugMappings(WebServer &server);
+    void handleDinplugConnect(WebServer &server);
     void handleDownloadFirmware(WebServer &server);
     void handleBackup(WebServer &server, bool attach = false);
     void handleReboot(WebServer &server);

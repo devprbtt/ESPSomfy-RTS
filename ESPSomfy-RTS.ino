@@ -10,6 +10,7 @@
 #include "MQTT.h"
 #include "GitOTA.h"
 #include "TelnetServer.h"
+#include "DinplugBridge.h"
 
 ConfigSettings settings;
 Web webServer;
@@ -45,6 +46,7 @@ void setup() {
   net.setup();  
   somfy.begin();
   telnet.begin();
+  dinplugBridge.begin();
   //git.checkForUpdate();
   esp_task_wdt_init(7, true); //enable panic so ESP32 restarts
   esp_task_wdt_add(NULL); //add current thread to WDT watch
@@ -86,6 +88,8 @@ void loop() {
     if(millis() - timing > 100) Serial.printf("Timing Socket: %ldms\n", millis() - timing);
     esp_task_wdt_reset();
     timing = millis();
+    dinplugBridge.loop();
+    esp_task_wdt_reset();
     telnet.loop();
     esp_task_wdt_reset();
   }
