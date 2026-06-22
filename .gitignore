@@ -3,12 +3,6 @@ debug_custom.json
 esp32.vsd
 esp32s3.svd
 debug.cfg
-.DS_Store
-*.pyc
-__pycache__/
-.arduino15/
-.codex-pio-build/
-.local/
 
 SomfyController.ino.XIAO_ESP32S3.bin
 SomfyController.ino.esp32c3.bin
