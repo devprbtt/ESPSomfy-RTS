@@ -1,0 +1,43 @@
+{
+  "listen_host": "0.0.0.0",
+  "listen_port": 2323,
+  "backend": "gree_local",
+  "devices": [
+    {
+      "thermostat_id": 1,
+      "name": "Living Room HVAC",
+      "mode": "OFF",
+      "power": false,
+      "setpoint": 24,
+      "current_temp": 25,
+      "fan": "FANAUTO"
+    },
+    {
+      "thermostat_id": 2,
+      "name": "Bedroom HVAC",
+      "mode": "COOL",
+      "power": true,
+      "setpoint": 23,
+      "current_temp": 26,
+      "fan": "FANLOW"
+    }
+  ],
+  "gree_local": {
+    "note": "Local Gree backend implemented for Savant-host testing; keep per-unit secrets here instead of in XML",
+    "timeout": 2.5,
+    "devices": [
+      {
+        "thermostat_id": 1,
+        "host": "192.168.5.62",
+        "port": 7000,
+        "mac": "replace-me",
+        "encryption_version": 2,
+        "key": "replace-me"
+      }
+    ]
+  },
+  "lg_thinq": {
+    "pat": "replace-me",
+    "region": "US"
+  }
+}
